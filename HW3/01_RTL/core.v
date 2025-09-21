@@ -1,6 +1,10 @@
 `timescale 1ns/1ps
 
-module core (
+module core #(
+    parameter   SRAM_SIZE = 512, //word, remember to check SRAM inctance
+                SRAM_COUNT = 4; //Number of SRAM
+                SRAM_COUNT_bit = 2; //log_2(SRAM_COUNT)
+)(
     input  wire        i_clk,
     input  wire        i_rst_n,            // async active-low
     input  wire        i_op_valid,         // one-cycle pulse carrying op
@@ -10,66 +14,84 @@ module core (
     output reg         o_op_ready,         // pulse when ready for next op
     output reg         o_in_ready,         // ready to accept input (LOAD)
     output reg         o_out_valid,        // streaming output valid
-    output reg  [13:0] o_out_data          // signed result / zero-extended pixel
+    output reg signed [13:0] o_out_data          // signed result / zero-extended pixel
 );
 
-    // -----------------------------
-    // Parameters & constants
-    // -----------------------------
-    localparam IMG_W   = 8;
-    localparam IMG_H   = 8;
-    localparam IMG_C   = 32;
-    localparam IMG_PIX = IMG_W*IMG_H*IMG_C; // 2048
+	// -----------------------------
+	// Parameters & constants
+	// -----------------------------
+	localparam 	IMG_W   = 8,
+				IMG_H   = 8,
+				IMG_C   = 32,
+				IMG_PIX = IMG_W*IMG_H*IMG_C; // 2048
 
-    // Depth encoding: 0->8, 1->16, 2->32
-    localparam DEPTH_8  = 2'd0;
-    localparam DEPTH_16 = 2'd1;
-    localparam DEPTH_32 = 2'd2;
+	// Depth encoding: 0->8, 1->16, 2->32
+	localparam 	DEPTH_8  = 2'd0,
+				DEPTH_16 = 2'd1,
+				DEPTH_32 = 2'd2;
 
-    // Opcodes
-    localparam OP_LOAD    = 4'b0000;
-    localparam OP_ORG_R   = 4'b0001;
-    localparam OP_ORG_L   = 4'b0010;
-    localparam OP_ORG_U   = 4'b0011;
-    localparam OP_ORG_D   = 4'b0100;
-    localparam OP_SCALE_D = 4'b0101;
-    localparam OP_SCALE_U = 4'b0110;
-    localparam OP_DISPLAY = 4'b0111;
-    localparam OP_CONV    = 4'b1000;
-    localparam OP_MEDIAN  = 4'b1001;
-    localparam OP_SOBEL   = 4'b1010;
+	// Opcodes
+	localparam 	OP_LOAD    = 4'b0000,
+				OP_ORG_R   = 4'b0001,
+				OP_ORG_L   = 4'b0010,
+				OP_ORG_U   = 4'b0011,
+				OP_ORG_D   = 4'b0100,
+				OP_SCALE_D = 4'b0101,
+				OP_SCALE_U = 4'b0110,
+				OP_DISPLAY = 4'b0111,
+				OP_CONV    = 4'b1000,
+				OP_MEDIAN  = 4'b1001,
+				OP_SOBEL   = 4'b1010;
+
+    // 宣告一個 3×3 的常數矩陣
+    localparam [2:0] GAUSS_KERNEL [0:2][0:2] = '{
+        '{3'd1, 3'd2, 3'd1},  // row 0: (ky=0)
+        '{3'd2, 3'd4, 3'd2},  // row 1: (ky=1)
+        '{3'd1, 3'd2, 3'd1}   // row 2: (ky=2)
+    };
 
     // -----------------------------
     // Negege-sampled inputs (spec p.6)
     // -----------------------------
-    reg        op_valid_n;
-    reg [3:0]  op_mode_n;
-    reg        in_valid_n;
-    reg [7:0]  in_data_n;
+    //reg        i_op_valid_r;
+    //reg [3:0]  i_op_mode_r;
+    reg        i_in_valid_r;
+    reg [7:0]  i_in_data_r;
+    reg         o_op_ready_r;         // pulse when ready for next op
+    reg         o_in_ready_r;         // ready to accept input (LOAD)
+    reg         o_out_valid_r;        // streaming output valid
+    reg signed [13:0] o_out_data_r;   
 
     always @(negedge i_clk or negedge i_rst_n) begin
         if (!i_rst_n) begin
-            op_valid_n <= 1'b0;
-            op_mode_n  <= 4'd0;
-            in_valid_n <= 1'b0;
-            in_data_n  <= 8'd0;
+            i_op_valid_r <= 1'b0;
+            i_op_mode_r  <= 4'd0;
+            i_in_valid_r <= 1'b0;
+            i_in_data_r  <= 8'd0;
         end else begin
-            op_valid_n <= i_op_valid;
-            op_mode_n  <= i_op_mode;
-            in_valid_n <= i_in_valid;
-            in_data_n  <= i_in_data;
+            i_op_valid_r <= i_op_valid;
+            i_op_mode_r  <= i_op_mode;
+            i_in_valid_r <= i_in_valid;
+            i_in_data_r  <= i_in_data;
         end
     end
 
     // -----------------------------
     // Global state / registers
     // -----------------------------
-    typedef enum logic [4:0] {
-        S_RESET     = 5'd0,
-        S_WAIT_OP   = 5'd1,
-        S_LOAD      = 5'd2,
-        S_SHIFT     = 5'd3,
-        S_SCALE     = 5'd4,
+    typedef enum logic [4:0] { //enum：定義一組有名字的常數（列舉）。
+        S_RESET     = 5'd0, //localparam S_RESET    = 5'd0;
+        S_START     = 5'd1,
+        S_O_OP_READY= 5'd2,
+        S_WAIT_OP   = 5'd3, //localparam S_WAIT_OP  = 5'd1;
+        S_LOAD      = 5'd4,
+        S_ORG_R     = 5'd5,
+        S_ORG_L     = 5'd6,
+        S_ORG_U     = 5'd7,
+        S_ORG_D     = 5'd8,
+        S_SCALE_D   = 5'd9,
+        S_SCALE_U   = 5'd10,
+
         S_DISPLAY   = 5'd5,
         S_CONV_ACC  = 5'd6,
         S_CONV_DONE = 5'd7,
@@ -81,7 +103,7 @@ module core (
         S_PULSE_RDY = 5'd13
     } state_t;
 
-    state_t state, state_n;
+    state_t state;// state_n; //logic [4:0] state, state_n;
 
     // Origin & depth
     reg [2:0] origin_x, origin_y; // 0..7, but window requires <=6
@@ -97,86 +119,40 @@ module core (
     endfunction
 
     // -----------------------------
-    // Banked image memory: 8 × (256×8)
+    // Banked image memory: SRAM_COUNT × (SRAM_SIZE × 8)
     // Index mapping: addr = (c*64) + (y*8 + x)
     // bank = addr[10:8], off = addr[7:0]
     // -----------------------------
 
-    // Uncomment to switch to SRAM macros during SYN/GATE
-    //`define USE_SRAM_MACROS
-
-`ifndef USE_SRAM_MACROS
-    // Behavioral RAMs for RTL simulation
-    reg [7:0] mem_bank [0:7][0:255];
-
-    // Write enable for LOAD path
-    reg        ram_we;
-    reg [10:0] ram_waddr;
-    reg [7:0]  ram_wdata;
-
-    // Synchronous write on posedge; combinational read via function below
-    integer bi;
-    always @(posedge i_clk or negedge i_rst_n) begin
-        if (!i_rst_n) begin
-            // no explicit clear needed; left X for speed
-        end else if (ram_we) begin
-            mem_bank[ram_waddr[10:8]][ram_waddr[7:0]] <= ram_wdata;
-        end
-    end
-`else
-    // Replace with your technology SRAMs (example portlist shown; adjust!)
-    // We provide a tiny wrapper API: ram_write(bank, addr8, data8)
-    // and ram_read(bank, addr8) function below assumes registered Q.
-    // You will likely need to pipeline reads by 1 cycle when using macros.
-
-    // Example macro interface (active-low control):
-    // module sram_256x8 (input CLK, input CSB, input WEB, input [7:0] A,
-    //                    input [7:0] D, output [7:0] Q);
-
-    // Banks
-    wire [7:0] q_bank [0:7];
-    reg        csb   [0:7];
-    reg        web   [0:7];
-    reg  [7:0] a_bus [0:7];
-    reg  [7:0] d_bus [0:7];
+    wire [8:0] SRAM_Q [0:SRAM_COUNT-1]; // Data Outputs (Q[0] = LSB)
+    reg        SRAM_CEN; // Chip Enable
+    reg        SRAM_WEN [0:SRAM_COUNT-1];
+    reg  [7:0] SRAM_A [0:SRAM_COUNT-1]; //Addresses (A[0] = LSB)
+    reg  [7:0] SRAM_D [0:SRAM_COUNT-1]; // Data Inputs (D[0] = LSB)
 
     genvar gi;
     generate
-    for (gi=0; gi<8; gi=gi+1) begin: GEN_SRAM
-        sram_256x8 u_sram (
+    for (gi=0; gi<SRAM_COUNT; gi=gi+1) begin: GEN_SRAM
+        sram_512x8 u_sram (
             .CLK(i_clk),
-            .CSB(csb[gi]),
-            .WEB(web[gi]),
-            .A  (a_bus[gi]),
-            .D  (d_bus[gi]),
-            .Q  (q_bank[gi])
+            .CEN(SRAM_CEN),
+            .WEN(SRAM_WEN),
+            .A  (SRAM_A[gi]),
+            .D  (SRAM_D[gi]),
+            .Q  (SRAM_Q[gi])
         );
     end
     endgenerate
 
-    // Simple write helper (1-cycle): drive selected bank with CSB=0, WEB=0
-    reg        ram_we;
-    reg [10:0] ram_waddr;
-    reg [7:0]  ram_wdata;
-    integer bj;
-    always @(*) begin
-        for (bj=0; bj<8; bj=bj+1) begin
-            csb[bj] = 1'b1; web[bj] = 1'b1; a_bus[bj] = 8'd0; d_bus[bj] = 8'd0;
-        end
-        if (ram_we) begin
-            csb[ram_waddr[10:8]] = 1'b0;
-            web[ram_waddr[10:8]] = 1'b0;
-            a_bus[ram_waddr[10:8]] = ram_waddr[7:0];
-            d_bus[ram_waddr[10:8]] = ram_wdata;
-        end
-    end
-`endif
-
-    // Address helper
-    function automatic [10:0] pack_addr(input [2:0] x, input [2:0] y, input [5:0] c);
-        pack_addr = (c*11'd64) + (y*11'd8 + x);
+    // Address helper, change x,y,c to raster-scan order
+    function automatic [10:0] RS_order2mem_addr(input [10:0] RS_order);
+        RS_order2mem_addr = {RS_order[5+SRAM_COUNT_bit:6], RS_order[10:6+SRAM_COUNT_bit], RS_order[5:0]}; //10~9 select Mem, 8~0 select Mem_address
+    endfunction
+    function automatic [10:0] xyc2mem_addr(input [2:0] x, input [2:0] y, input [4:0] c);
+        xyc2mem_addr = {c[SRAM_COUNT_bit-1:0], c[4:SRAM_COUNT_bit], y*6'd8 + x};//10~9 select Mem, 8~0 select Mem_address
     endfunction
 
+/*functon本身應該不會用到，但條件式之後可以用
     // Safe pixel read with zero padding (out-of-bound → 0)
     function automatic [7:0] rd_px(input integer xc, input integer yc, input integer ch);
         if (xc < 0 || xc >= IMG_W || yc < 0 || yc >= IMG_H || ch < 0 || ch >= IMG_C) begin
@@ -185,33 +161,20 @@ module core (
             rd_px = rd_mem(xc[2:0], yc[2:0], ch[5:0]);
         end
     endfunction
-
-    // Back-end memory read (behavioral arrays or macro Qs)
-    function automatic [7:0] rd_mem(input [2:0] x, input [2:0] y, input [5:0] c);
-        reg [10:0] a;
-        begin
-            a = pack_addr(x,y,c);
-`ifndef USE_SRAM_MACROS
-            rd_mem = mem_bank[a[10:8]][a[7:0]];
-`else
-            // For real macros, Q is registered. You may need to stage reads.
-            rd_mem = q_bank[a[10:8]]; // WARNING: placeholder – adapt to your macro timing
-`endif
-        end
-    endfunction
+*/
 
     // -----------------------------
     // LOAD engine
     // -----------------------------
-    reg [11:0] load_cnt; // 0..2048
-
+    reg [10:0] load_cnt; // 0..2047
+/*
     // -----------------------------
     // DISPLAY streamer counters (channel-major after 2×2 raster)
     // -----------------------------
-    reg [5:0]  disp_c;   // up to 32
-    reg [1:0]  disp_xy;  // 0:(0,0) 1:(1,0) 2:(0,1) 3:(1,1)
-    reg [13:0] stream_dat;
-    reg        stream_vld;
+    reg [5:0]  disp_c;   // up to 32, 控制正在輸出的 channel
+    reg [1:0]  disp_xy;  // 0:(0,0) 1:(1,0) 2:(0,1) 3:(1,1), 控制在該 channel 裡的 2×2 小 tile 座標
+    reg [13:0] stream_dat; //存放準備輸出的資料
+    reg        stream_vld; //標示當前輸出資料是否有效
 
     // -----------------------------
     // CONV accumulator (process 1 output pixel at a time → 4 outputs)
@@ -219,19 +182,10 @@ module core (
     reg [1:0]  conv_xy;      // which of 4 outputs we are accumulating
     reg [5:0]  conv_c;       // channel index for accumulation
     reg [1:0]  conv_ky, conv_kx; // 0..2 for kernel loops
-    reg [23:0] conv_acc;     // wide accumulator (enough for 32*4080 ≈ 130560)
+    //reg [23:0] conv_acc;     // wide accumulator (enough for 32*4080 ≈ 130560)
     reg        conv_do_add;
-
-    // Precomputed kernel weights (Gaussian 1,2,1; 2,4,2; 1,2,1)
-    function automatic [2:0] k_gauss(input [1:0] ky, input [1:0] kx);
-        case ({ky,kx})
-            4'b00_00,4'b00_10,4'b10_00,4'b10_10: k_gauss = 3'd1; // corners
-            4'b00_01,4'b01_00,4'b01_10,4'b10_01: k_gauss = 3'd2; // edges
-            default:                              k_gauss = 3'd4; // center (ky=1,kx=1)
-        endcase
-    endfunction
-
-    // -----------------------------
+*/
+/*     // -----------------------------
     // MEDIAN buffers & sorter (median of 9)
     // -----------------------------
     reg [1:0]  med_xy;       // 0..3
@@ -239,7 +193,7 @@ module core (
     reg [7:0]  med_win [0:8];// 3×3 window values
     integer    mi, mj;
 
-    // Selection sort to get median index 4 after sorting ascending
+   // Selection sort to get median index 4 after sorting asSRAM_CENding
     task automatic median9_sort;
         reg [7:0] tmp;
         integer i,j,imin;
@@ -255,7 +209,8 @@ module core (
             end
         end
     endtask
-
+*/
+/*
     // -----------------------------
     // SOBEL + NMS engine (per channel & per 2×2 pos)
     // -----------------------------
@@ -322,7 +277,7 @@ module core (
         end
     endfunction
 
-    // For NMS we need both gx,gy at the center; compute alongside mag
+    // For NMS we need both gx,gy at the SRAM_CENter; compute alongside mag
     function automatic void sobel_vec(
         input integer x0, input integer y0, input integer ch,
         output signed [15:0] gx, output signed [15:0] gy, output [15:0] g
@@ -349,45 +304,55 @@ module core (
             g = abs16(gx) + abs16(gy);
         end
     endfunction
-
+*/
     // -----------------------------
     // FSM & control
     // -----------------------------
-    reg [13:0] out_data_next;
-    reg        out_valid_next;
+    //reg [13:0] out_data_next;
+    //reg        out_valid_next;
 
-    // Temp regs for sobel center/neighbor mags
-    reg  signed [15:0] gx_c, gy_c; reg [15:0] g_c;
-    reg  [15:0] g_n1, g_n2;
-    dir_t g_dir;
+    // Temp regs for sobel SRAM_CENter/neighbor mags
+    //reg  signed [15:0] gx_c, gy_c; reg [15:0] g_c;
+    //reg  [15:0] g_n1, g_n2;
+    //dir_t g_dir;
 
-    // LOAD write control default
-    always @(*) begin
-        ram_we   = 1'b0;
-        ram_waddr= 11'd0;
-        ram_wdata= 8'd0;
-    end
 
     // Next-state (combinational) for simple stream datapath
     always @(*) begin
-        stream_vld   = 1'b0;
-        stream_dat   = 14'sd0;
-
+        //stream_vld   = 1'b0;
+        //stream_dat   = 14'sd0;
+            o_op_ready = 1'b0;
+            o_in_ready = 1'b0;
         case (state)
-            S_DISPLAY: begin
-                // Output order: for ch=0..depth-1: (0,0),(1,0),(0,1),(1,1)
-                stream_vld = 1'b1;
-                unique case (disp_xy)
-                    2'd0: stream_dat = {6'd0, rd_mem(origin_x+0, origin_y+0, disp_c)};
-                    2'd1: stream_dat = {6'd0, rd_mem(origin_x+1, origin_y+0, disp_c)};
-                    2'd2: stream_dat = {6'd0, rd_mem(origin_x+0, origin_y+1, disp_c)};
-                    default: stream_dat = {6'd0, rd_mem(origin_x+1, origin_y+1, disp_c)};
-                endcase
+            S_RESET: begin
+
             end
-            default: begin
-                stream_vld = 1'b0;
-                stream_dat = 14'sd0;
+            S_START: begin
+
             end
+            S_O_OP_READY: begin
+                o_op_ready = 1'b1;
+            end
+            S_WAIT_OP: begin
+
+            end
+            S_LOAD: begin
+                o_in_ready = 1'b1;
+            end 
+            // S_DISPLAY: begin
+            //     // Output order: for ch=0..depth-1: (0,0),(1,0),(0,1),(1,1)
+            //     stream_vld = 1'b1;
+            //     unique case (disp_xy)
+            //         2'd0: stream_dat = {6'd0, rd_mem(origin_x+0, origin_y+0, disp_c)};
+            //         2'd1: stream_dat = {6'd0, rd_mem(origin_x+1, origin_y+0, disp_c)};
+            //         2'd2: stream_dat = {6'd0, rd_mem(origin_x+0, origin_y+1, disp_c)};
+            //         default: stream_dat = {6'd0, rd_mem(origin_x+1, origin_y+1, disp_c)};
+            //     endcase
+            // end
+            // default: begin
+            //     stream_vld = 1'b0;
+            //     stream_dat = 14'sd0;
+            // end
         endcase
     end
 
@@ -395,52 +360,66 @@ module core (
     always @(posedge i_clk or negedge i_rst_n) begin
         if (!i_rst_n) begin
             state       <= S_RESET;
-            o_op_ready  <= 1'b0;
-            o_in_ready  <= 1'b0;
-            o_out_valid <= 1'b0;
-            o_out_data  <= 14'sd0;
-            origin_x    <= 3'd0;
-            origin_y    <= 3'd0;
-            depth_sel   <= DEPTH_32; // default 32
-            load_cnt    <= 12'd0;
-            disp_c      <= 6'd0;
-            disp_xy     <= 2'd0;
-            conv_xy     <= 2'd0;
-            conv_c      <= 6'd0;
-            conv_ky     <= 2'd0;
-            conv_kx     <= 2'd0;
-            conv_acc    <= 24'd0;
-            med_xy      <= 2'd0;
-            med_ch      <= 2'd0;
-            sob_xy      <= 2'd0;
-            sob_ch      <= 2'd0;
-        end else begin
-            // Default output regs
-            o_op_ready  <= 1'b0;
-            o_out_valid <= 1'b0;
+            //i_op_valid_r <= 1'b0;
+            //i_op_mode_r  <= 4'd0;
+            i_in_valid_r <= 1'b0;
+            i_in_data_r  <= 8'd0;
+            o_op_ready_r  <= 1'b0;
+            o_in_ready_r  <= 1'b0;
+            o_out_valid_r <= 1'b0;
+            o_out_data_r  <= 14'sd0;
 
+            // origin_x    <= 3'd0;
+            // origin_y    <= 3'd0;
+            // depth_sel   <= DEPTH_32; // default 32
+            // load_cnt    <= 12'd0;
+            // disp_c      <= 6'd0;
+            // disp_xy     <= 2'd0;
+            // conv_xy     <= 2'd0;
+            // conv_c      <= 6'd0;
+            // conv_ky     <= 2'd0;
+            // conv_kx     <= 2'd0;
+            // conv_acc    <= 24'd0;
+            // med_xy      <= 2'd0;
+            // med_ch      <= 2'd0;
+            // sob_xy      <= 2'd0;
+            // sob_ch      <= 2'd0;
+        end else begin
             case (state)
                 S_RESET: begin
+                    state <= S_START;
+                end
+                S_START: begin
+                    state <= S_O_OP_READY;
+                end
+                S_O_OP_READY: begin
                     state <= S_WAIT_OP;
                 end
-
-                // ================= LOAD (OP 0000) =================
                 S_WAIT_OP: begin
-                    o_in_ready <= 1'b0;
-                    if (op_valid_n) begin
-                        unique case (op_mode_n)
+                    if (i_op_valid) begin
+                        unique case (i_op_mode)
                             OP_LOAD: begin
                                 // begin loading 2048 bytes
-                                o_in_ready <= 1'b1;
-                                load_cnt   <= 12'd0;
+                                load_cnt   <= 11'd0;
                                 state      <= S_LOAD;
                             end
-                            OP_ORG_R, OP_ORG_L, OP_ORG_U, OP_ORG_D: begin
-                                // apply shift with boundary check (origin must stay within 0..6)
-                                state <= S_SHIFT;
+                            OP_ORG_R : begin
+                                state <= S_ORG_R;
                             end
-                            OP_SCALE_D, OP_SCALE_U: begin
-                                state <= S_SCALE;
+                            OP_ORG_L : begin
+                                state <= S_ORG_L;
+                            end
+                            OP_ORG_U : begin
+                                state <= S_ORG_U;
+                            end
+                            OP_ORG_D : begin
+                                state <= S_ORG_D;
+                            end
+                            OP_SCALE_D: begin
+                                state <= S_SCALE_D;
+                            end
+                            OP_SCALE_U: begin
+                                state <= S_SCALE_U;
                             end
                             OP_DISPLAY: begin
                                 disp_c  <= 6'd0;
@@ -457,7 +436,7 @@ module core (
                             end
                             OP_SOBEL: begin
                                 sob_ch <= 2'd0; sob_xy <= 2'd0;
-                                state  <= S_SOBEL_ACC; // compute center first
+                                state  <= S_SOBEL_ACC; // compute SRAM_CENter first
                             end
                             default: begin
                                 // ignore undefined opcodes
@@ -468,11 +447,11 @@ module core (
                 end
 
                 S_LOAD: begin
-                    // Accept data only when both in_valid_n & o_in_ready; write to memory
-                    if (in_valid_n && o_in_ready) begin
+                    // Accept data only when both i_in_valid_r & o_in_ready; write to memory
+                    if (i_in_valid_r && o_in_ready) begin
                         ram_we    <= 1'b1;
                         ram_waddr <= load_cnt[10:0];
-                        ram_wdata <= in_data_n;
+                        ram_wdata <= i_in_data_r;
                         load_cnt  <= load_cnt + 12'd1;
                         if (load_cnt == IMG_PIX-1) begin
                             o_in_ready <= 1'b0;
@@ -484,7 +463,7 @@ module core (
 
                 // ================= ORIGIN SHIFT =================
                 S_SHIFT: begin
-                    case (op_mode_n)
+                    case (i_op_mode_r)
                         OP_ORG_R: if (origin_x < 3'd6) origin_x <= origin_x + 3'd1; // keep if boundary
                         OP_ORG_L: if (origin_x > 3'd0) origin_x <= origin_x - 3'd1;
                         OP_ORG_U: if (origin_y > 3'd0) origin_y <= origin_y - 3'd1;
@@ -495,7 +474,7 @@ module core (
 
                 // ================= SCALE DEPTH =================
                 S_SCALE: begin
-                    case (op_mode_n)
+                    case (i_op_mode_r)
                         OP_SCALE_D: begin
                             if (depth_sel == DEPTH_32) depth_sel <= DEPTH_16;
                             else if (depth_sel == DEPTH_16) depth_sel <= DEPTH_8;
@@ -613,7 +592,7 @@ module core (
 
                 // ================= SOBEL + NMS (first 4 channels) =================
                 S_SOBEL_ACC: begin
-                    // Compute center gradient & direction
+                    // Compute SRAM_CENter gradient & direction
                     integer bx, by; bx = origin_x + (sob_xy[0] ? 1 : 0); by = origin_y + (sob_xy[1] ? 1 : 0);
                     sobel_vec(bx, by, sob_ch, gx_c, gy_c, g_c);
                     g_dir <= sobel_dir(gx_c, gy_c);
@@ -634,7 +613,7 @@ module core (
                     g_n1 = sobel_mag(nx1, ny1, sob_ch);
                     g_n2 = sobel_mag(nx2, ny2, sob_ch);
 
-                    // Suppress if center < any neighbor
+                    // Suppress if SRAM_CENter < any neighbor
                     if (g_c < g_n1 || g_c < g_n2) begin
                         o_out_data  <= 14'sd0;
                     end else begin
