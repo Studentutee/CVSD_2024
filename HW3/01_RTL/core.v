@@ -352,7 +352,8 @@ module core #(
             end
             S_SCALE_U: begin
 
-            end
+            end    
+            
             // S_DISPLAY: begin
             //     // Output order: for ch=0..depth-1: (0,0),(1,0),(0,1),(1,1)
             //     stream_vld = 1'b1;
@@ -490,16 +491,17 @@ module core #(
                 S_SCALE_D: begin
                     if (depth_sel > DEPTH_8) depth_sel <= depth_sel - 2'd1;
                     state <= S_O_OP_READY;
-                end
+                end  
                 S_SCALE_U: begin
                     if (depth_sel < DEPTH_32) depth_sel <= depth_sel + 2'd1;
                     state <= S_O_OP_READY;
                 end
+                      
 
                 // ================= DISPLAY STREAM =================
                 S_DISPLAY: begin
-                    o_out_valid <= stream_vld;
-                    o_out_data  <= stream_dat;
+                    //o_out_valid <= stream_vld;
+                    //o_out_data  <= stream_dat;
                     if (stream_vld) begin
                         if (disp_xy == 2'd3) begin
                             disp_xy <= 2'd0;
