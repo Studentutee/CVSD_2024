@@ -163,8 +163,7 @@ module core #(
     // -----------------------------
     reg [5:0]  disp_c;   // up to 32, 控制正在輸出的 channel
     reg [1:0]  disp_xy;  // 0:(0,0) 1:(1,0) 2:(0,1) 3:(1,1), 控制在該 channel 裡的 2×2 小 tile 座標
-    reg        disp_done;
-    reg [1:0]  disp_fsm;
+
 /*   reg [13:0] stream_dat; //存放準備輸出的資料
     reg        stream_vld; //標示當前輸出資料是否有效
 
@@ -377,7 +376,7 @@ module core #(
                 sram_wen[sram_select] = 1'b1; // read
                 sram_a[sram_select]   = sram_addr;
                 if (o_out_valid) begin
-                    o_out_data = sram_d[sram_select];
+                    o_out_data = sram_d[sram_select_R];
                 end
             end    
 
@@ -394,7 +393,7 @@ module core #(
             //i_in_data_r  <= 8'd0;
             //o_op_ready_r  <= 1'b0;
             //o_in_ready_r  <= 1'b0;
-            o_out_valid_r <= 1'b0;
+            //o_out_valid_r <= 1'b0;
             //o_out_data_r  <= 14'sd0;
 
             origin_x    <= 3'd0;
@@ -403,7 +402,6 @@ module core #(
             load_cnt    <= 11'd0;
             disp_c      <= 6'd0;
             disp_xy     <= 2'd0;
-            disp_done   <= 1'b0;
             // conv_xy     <= 2'd0;
             // conv_c      <= 6'd0;
             // conv_ky     <= 2'd0;
@@ -515,29 +513,29 @@ module core #(
                 S_DISPLAY: begin
                     case (disp_fsm)
                         2'd0: begin
-                            
+                            sram_select_r <= sram_select;
+                            o_out_valid <= 1'b1;
+                            disp_xy <= disp_xy + 2'd1;
+                            disp_fsm <= 2'd1;
                         end
                         2'd1: begin
-                            // Active state
+                            sram_select_r <= sram_select;
+                            disp_xy <= disp_xy + 2'd1;
+                            if (disp_xy == 2'd3) begin
+                                if (disp_c + 6'd1 < depth_value(depth_sel)) begin
+                                    disp_c <= disp_c + 6'd1;
+                                end else begin
+                                    disp_fsm <= 2'd2;
+                                    disp_c <= 6'd0;
+                                end
+                            end                                               
                         end
-
+                        default: begin
+                            o_out_valid <= 1'b0;
+                            disp_fsm <= 2'd0;
+                            state <= S_O_OP_READY;
+                        end
                     endcase
-                    sram_select_r <= sram_select;
-                    
-                    if(disp_done) begin
-                        o_out_valid_r <= 1'b0;
-                        state       <= S_O_OP_READY;
-                    end else begin
-                        o_out_valid_r <= 1'b1;
-                        disp_done <= 1'b0;
-                        disp_xy <= disp_xy + 2'd1;
-                    end
-                    if (disp_xy == 2'd3) begin
-                        disp_xy <= 2'd0;
-                        if (disp_c + 6'd1 < depth_value(depth_sel)) begin
-                            disp_c <= disp_c + 6'd1;
-                        end
-                    end
                 end
 
                 // ================= CONVOLUTION (sequential MAC) =================
