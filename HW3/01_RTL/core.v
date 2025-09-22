@@ -2,8 +2,8 @@
 
 module core #(
     parameter   SRAM_SIZE = 512, //word, remember to check SRAM inctance
-                SRAM_COUNT = 4; //Number of SRAM
-                SRAM_COUNT_bit = 2; //log_2(SRAM_COUNT)
+                SRAM_COUNT = 4, //Number of SRAM
+                SRAM_COUNT_BIT = 2; //log_2(SRAM_COUNT)
 )(
     input  wire        i_clk,
     input  wire        i_rst_n,            // async active-low
@@ -55,26 +55,12 @@ module core #(
     // -----------------------------
     //reg        i_op_valid_r;
     //reg [3:0]  i_op_mode_r;
-    reg        i_in_valid_r;
+    //reg        i_in_valid_r;
     reg [7:0]  i_in_data_r;
     reg         o_op_ready_r;         // pulse when ready for next op
     reg         o_in_ready_r;         // ready to accept input (LOAD)
     reg         o_out_valid_r;        // streaming output valid
     reg signed [13:0] o_out_data_r;   
-
-    always @(negedge i_clk or negedge i_rst_n) begin
-        if (!i_rst_n) begin
-            i_op_valid_r <= 1'b0;
-            i_op_mode_r  <= 4'd0;
-            i_in_valid_r <= 1'b0;
-            i_in_data_r  <= 8'd0;
-        end else begin
-            i_op_valid_r <= i_op_valid;
-            i_op_mode_r  <= i_op_mode;
-            i_in_valid_r <= i_in_valid;
-            i_in_data_r  <= i_in_data;
-        end
-    end
 
     // -----------------------------
     // Global state / registers
@@ -124,32 +110,34 @@ module core #(
     // bank = addr[10:8], off = addr[7:0]
     // -----------------------------
 
-    wire [8:0] SRAM_Q [0:SRAM_COUNT-1]; // Data Outputs (Q[0] = LSB)
-    reg        SRAM_CEN; // Chip Enable
-    reg        SRAM_WEN [0:SRAM_COUNT-1];
-    reg  [7:0] SRAM_A [0:SRAM_COUNT-1]; //Addresses (A[0] = LSB)
-    reg  [7:0] SRAM_D [0:SRAM_COUNT-1]; // Data Inputs (D[0] = LSB)
+    wire [8:0] sram_q [0:SRAM_COUNT-1]; // Data Outputs (Q[0] = LSB)
+    reg        sram_cen; // Chip Enable
+    reg        sram_wen [0:SRAM_COUNT-1];
+    reg  [7:0] sram_a [0:SRAM_COUNT-1]; //Addresses (A[0] = LSB)
+    reg  [7:0] sram_d [0:SRAM_COUNT-1]; // Data Inputs (D[0] = LSB)
+    reg  [SRAM_COUNT_BIT-1:0] sram_select; // Which SRAM to use for current op
+    reg  [SRAM_SIZE-1:0] sram_addr; // Address within selected SRAM
 
     genvar gi;
     generate
     for (gi=0; gi<SRAM_COUNT; gi=gi+1) begin: GEN_SRAM
         sram_512x8 u_sram (
             .CLK(i_clk),
-            .CEN(SRAM_CEN),
-            .WEN(SRAM_WEN),
-            .A  (SRAM_A[gi]),
-            .D  (SRAM_D[gi]),
-            .Q  (SRAM_Q[gi])
+            .CEN(sram_cen),
+            .WEN(sram_wen[gi]),
+            .A  (sram_a[gi]),
+            .D  (sram_d[gi]),
+            .Q  (sram_q[gi])
         );
     end
     endgenerate
 
     // Address helper, change x,y,c to raster-scan order
     function automatic [10:0] RS_order2mem_addr(input [10:0] RS_order);
-        RS_order2mem_addr = {RS_order[5+SRAM_COUNT_bit:6], RS_order[10:6+SRAM_COUNT_bit], RS_order[5:0]}; //10~9 select Mem, 8~0 select Mem_address
+        RS_order2mem_addr = {RS_order[5+SRAM_COUNT_BIT:6], RS_order[10:6+SRAM_COUNT_BIT], RS_order[5:0]}; //10~9 select Mem, 8~0 select Mem_address
     endfunction
     function automatic [10:0] xyc2mem_addr(input [2:0] x, input [2:0] y, input [4:0] c);
-        xyc2mem_addr = {c[SRAM_COUNT_bit-1:0], c[4:SRAM_COUNT_bit], y*6'd8 + x};//10~9 select Mem, 8~0 select Mem_address
+        xyc2mem_addr = {c[SRAM_COUNT_BIT-1:0], c[4:SRAM_COUNT_BIT], y*6'd8 + x};//10~9 select Mem, 8~0 select Mem_address
     endfunction
 
 /*functon本身應該不會用到，但條件式之後可以用
@@ -193,7 +181,7 @@ module core #(
     reg [7:0]  med_win [0:8];// 3×3 window values
     integer    mi, mj;
 
-   // Selection sort to get median index 4 after sorting asSRAM_CENding
+   // Selection sort to get median index 4 after sorting assram_cending
     task automatic median9_sort;
         reg [7:0] tmp;
         integer i,j,imin;
@@ -277,7 +265,7 @@ module core #(
         end
     endfunction
 
-    // For NMS we need both gx,gy at the SRAM_CENter; compute alongside mag
+    // For NMS we need both gx,gy at the sram_center; compute alongside mag
     function automatic void sobel_vec(
         input integer x0, input integer y0, input integer ch,
         output signed [15:0] gx, output signed [15:0] gy, output [15:0] g
@@ -311,7 +299,7 @@ module core #(
     //reg [13:0] out_data_next;
     //reg        out_valid_next;
 
-    // Temp regs for sobel SRAM_CENter/neighbor mags
+    // Temp regs for sobel sram_center/neighbor mags
     //reg  signed [15:0] gx_c, gy_c; reg [15:0] g_c;
     //reg  [15:0] g_n1, g_n2;
     //dir_t g_dir;
@@ -323,6 +311,8 @@ module core #(
         //stream_dat   = 14'sd0;
             o_op_ready = 1'b0;
             o_in_ready = 1'b0;
+            sram_cen = 1'b1; // default disable
+            sram_wen = 4'b1; // default read
         case (state)
             S_RESET: begin
 
@@ -337,8 +327,13 @@ module core #(
 
             end
             S_LOAD: begin
-                o_in_ready = 1'b1;
-            end 
+                o_in_ready = 1'b0;
+                sram_cen = 1'b1;
+                sram_center
+                if (load_cnt[5+SRAM_COUNT_BIT:6]==SRAM_COUNT_BIT'd0) begin //save in First SRAM 
+
+                end 
+            end
             // S_DISPLAY: begin
             //     // Output order: for ch=0..depth-1: (0,0),(1,0),(0,1),(1,1)
             //     stream_vld = 1'b1;
@@ -362,7 +357,7 @@ module core #(
             state       <= S_RESET;
             //i_op_valid_r <= 1'b0;
             //i_op_mode_r  <= 4'd0;
-            i_in_valid_r <= 1'b0;
+            //i_in_valid_r <= 1'b0;
             i_in_data_r  <= 8'd0;
             o_op_ready_r  <= 1'b0;
             o_in_ready_r  <= 1'b0;
@@ -422,25 +417,25 @@ module core #(
                                 state <= S_SCALE_U;
                             end
                             OP_DISPLAY: begin
-                                disp_c  <= 6'd0;
-                                disp_xy <= 2'd0;
+                                //disp_c  <= 6'd0;
+                                //disp_xy <= 2'd0;
                                 state   <= S_DISPLAY;
                             end
                             OP_CONV: begin
-                                conv_xy  <= 2'd0; conv_c <= 6'd0; conv_ky<=2'd0; conv_kx<=2'd0; conv_acc<=24'd0;
+                                //conv_xy  <= 2'd0; conv_c <= 6'd0; conv_ky<=2'd0; conv_kx<=2'd0; conv_acc<=24'd0;
                                 state    <= S_CONV_ACC;
                             end
                             OP_MEDIAN: begin
-                                med_ch <= 2'd0; med_xy <= 2'd0;
+                                //med_ch <= 2'd0; med_xy <= 2'd0;
                                 state  <= S_MED_PREP;
                             end
                             OP_SOBEL: begin
-                                sob_ch <= 2'd0; sob_xy <= 2'd0;
-                                state  <= S_SOBEL_ACC; // compute SRAM_CENter first
+                                //sob_ch <= 2'd0; sob_xy <= 2'd0;
+                                state  <= S_SOBEL_ACC; // compute sram_center first
                             end
                             default: begin
                                 // ignore undefined opcodes
-                                o_op_ready <= 1'b1; // next op please
+                                //o_op_ready <= 1'b1; // next op please
                             end
                         endcase
                     end
@@ -448,15 +443,16 @@ module core #(
 
                 S_LOAD: begin
                     // Accept data only when both i_in_valid_r & o_in_ready; write to memory
-                    if (i_in_valid_r && o_in_ready) begin
+                    if (i_in_valid) begin
+
                         ram_we    <= 1'b1;
                         ram_waddr <= load_cnt[10:0];
                         ram_wdata <= i_in_data_r;
                         load_cnt  <= load_cnt + 12'd1;
                         if (load_cnt == IMG_PIX-1) begin
-                            o_in_ready <= 1'b0;
-                            o_op_ready <= 1'b1; // signal ready for next op
-                            state      <= S_WAIT_OP;
+                            
+                            
+                            state      <= S_START;
                         end
                     end
                 end
@@ -592,7 +588,7 @@ module core #(
 
                 // ================= SOBEL + NMS (first 4 channels) =================
                 S_SOBEL_ACC: begin
-                    // Compute SRAM_CENter gradient & direction
+                    // Compute sram_center gradient & direction
                     integer bx, by; bx = origin_x + (sob_xy[0] ? 1 : 0); by = origin_y + (sob_xy[1] ? 1 : 0);
                     sobel_vec(bx, by, sob_ch, gx_c, gy_c, g_c);
                     g_dir <= sobel_dir(gx_c, gy_c);
@@ -613,7 +609,7 @@ module core #(
                     g_n1 = sobel_mag(nx1, ny1, sob_ch);
                     g_n2 = sobel_mag(nx2, ny2, sob_ch);
 
-                    // Suppress if SRAM_CENter < any neighbor
+                    // Suppress if sram_center < any neighbor
                     if (g_c < g_n1 || g_c < g_n2) begin
                         o_out_data  <= 14'sd0;
                     end else begin
