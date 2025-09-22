@@ -2,8 +2,9 @@
 
 module core #(
     parameter   SRAM_SIZE = 512, //word, remember to check SRAM inctance
+                SRAM_SIZE_BITS = 9, //log_2(SRAM_SIZE)
                 SRAM_COUNT = 4, //Number of SRAM
-                SRAM_COUNT_BIT = 2; //log_2(SRAM_COUNT)
+                SRAM_COUNT_BITS = 2; //log_2(SRAM_COUNT)
 )(
     input  wire        i_clk,
     input  wire        i_rst_n,            // async active-low
@@ -56,7 +57,7 @@ module core #(
     //reg        i_op_valid_r;
     //reg [3:0]  i_op_mode_r;
     //reg        i_in_valid_r;
-    reg [7:0]  i_in_data_r;
+    //reg [7:0]  i_in_data_r;
     reg         o_op_ready_r;         // pulse when ready for next op
     reg         o_in_ready_r;         // ready to accept input (LOAD)
     reg         o_out_valid_r;        // streaming output valid
@@ -115,7 +116,7 @@ module core #(
     reg        sram_wen [0:SRAM_COUNT-1];
     reg  [7:0] sram_a [0:SRAM_COUNT-1]; //Addresses (A[0] = LSB)
     reg  [7:0] sram_d [0:SRAM_COUNT-1]; // Data Inputs (D[0] = LSB)
-    reg  [SRAM_COUNT_BIT-1:0] sram_select; // Which SRAM to use for current op
+    reg  [SRAM_COUNT_BITS-1:0] sram_select; // Which SRAM to use for current op
     reg  [SRAM_SIZE-1:0] sram_addr; // Address within selected SRAM
 
     genvar gi;
@@ -134,10 +135,10 @@ module core #(
 
     // Address helper, change x,y,c to raster-scan order
     function automatic [10:0] RS_order2mem_addr(input [10:0] RS_order);
-        RS_order2mem_addr = {RS_order[5+SRAM_COUNT_BIT:6], RS_order[10:6+SRAM_COUNT_BIT], RS_order[5:0]}; //10~9 select Mem, 8~0 select Mem_address
+        RS_order2mem_addr = {RS_order[5+SRAM_COUNT_BITS:6], RS_order[10:6+SRAM_COUNT_BITS], RS_order[5:0]}; //10~9 select Mem, 8~0 select Mem_address
     endfunction
     function automatic [10:0] xyc2mem_addr(input [2:0] x, input [2:0] y, input [4:0] c);
-        xyc2mem_addr = {c[SRAM_COUNT_BIT-1:0], c[4:SRAM_COUNT_BIT], y*6'd8 + x};//10~9 select Mem, 8~0 select Mem_address
+        xyc2mem_addr = {c[SRAM_COUNT_BITS-1:0], c[4:SRAM_COUNT_BITS], y*6'd8 + x};//10~9 select Mem, 8~0 select Mem_address
     endfunction
 
 /*functon本身應該不會用到，但條件式之後可以用
@@ -329,10 +330,22 @@ module core #(
             S_LOAD: begin
                 o_in_ready = 1'b0;
                 sram_cen = 1'b1;
-                sram_center
-                if (load_cnt[5+SRAM_COUNT_BIT:6]==SRAM_COUNT_BIT'd0) begin //save in First SRAM 
+                {sram_select, sram_addr} = RS_order2mem_addr(load_cnt);
+                    sram_wen[sram_select] = 1'b0; // write enable
+                    sram_a[sram_select]   = sram_addr;
+                    sram_d[sram_select]   = i_in_data;            
+            end
+            S_ORG_R: begin
 
-                end 
+            end
+            S_ORG_L: begin
+
+            end
+            S_ORG_U: begin
+
+            end
+            S_ORG_D: begin
+
             end
             // S_DISPLAY: begin
             //     // Output order: for ch=0..depth-1: (0,0),(1,0),(0,1),(1,1)
@@ -358,13 +371,13 @@ module core #(
             //i_op_valid_r <= 1'b0;
             //i_op_mode_r  <= 4'd0;
             //i_in_valid_r <= 1'b0;
-            i_in_data_r  <= 8'd0;
+            //i_in_data_r  <= 8'd0;
             o_op_ready_r  <= 1'b0;
             o_in_ready_r  <= 1'b0;
             o_out_valid_r <= 1'b0;
             o_out_data_r  <= 14'sd0;
 
-            // origin_x    <= 3'd0;
+            origin_x    <= 3'd0;
             // origin_y    <= 3'd0;
             // depth_sel   <= DEPTH_32; // default 32
             // load_cnt    <= 12'd0;
@@ -444,29 +457,30 @@ module core #(
                 S_LOAD: begin
                     // Accept data only when both i_in_valid_r & o_in_ready; write to memory
                     if (i_in_valid) begin
-
-                        ram_we    <= 1'b1;
-                        ram_waddr <= load_cnt[10:0];
-                        ram_wdata <= i_in_data_r;
-                        load_cnt  <= load_cnt + 12'd1;
-                        if (load_cnt == IMG_PIX-1) begin
-                            
-                            
-                            state      <= S_START;
+                        load_cnt  <= load_cnt + 11'd1;
+                        if (load_cnt == IMG_PIX-1) begin                                                       
+                            state      <= S_O_OP_READY;
                         end
                     end
                 end
-
                 // ================= ORIGIN SHIFT =================
-                S_SHIFT: begin
-                    case (i_op_mode_r)
-                        OP_ORG_R: if (origin_x < 3'd6) origin_x <= origin_x + 3'd1; // keep if boundary
-                        OP_ORG_L: if (origin_x > 3'd0) origin_x <= origin_x - 3'd1;
-                        OP_ORG_U: if (origin_y > 3'd0) origin_y <= origin_y - 3'd1;
-                        OP_ORG_D: if (origin_y < 3'd6) origin_y <= origin_y + 3'd1;
-                    endcase
-                    o_op_ready <= 1'b1; state <= S_WAIT_OP;
+                S_ORG_R: begin
+                    if (origin_x < 3'd6) origin_x <= origin_x + 3'd1;
+                    state <= S_O_OP_READY;
                 end
+                S_ORG_L: begin
+                    if (origin_x > 3'd0) origin_x <= origin_x - 3'd1;
+                    state <= S_O_OP_READY;
+                end
+                S_ORG_U: begin
+                    if (origin_y > 3'd0) origin_y <= origin_y - 3'd1;
+                    state <= S_O_OP_READY;
+                end
+                S_ORG_D: begin
+                    if (origin_y < 3'd6) origin_y <= origin_y + 3'd1;
+                    state <= S_O_OP_READY;
+                end
+
 
                 // ================= SCALE DEPTH =================
                 S_SCALE: begin
