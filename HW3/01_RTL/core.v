@@ -58,10 +58,10 @@ module core #(
     //reg [3:0]  i_op_mode_r;
     //reg        i_in_valid_r;
     //reg [7:0]  i_in_data_r;
-    reg         o_op_ready_r;         // pulse when ready for next op
-    reg         o_in_ready_r;         // ready to accept input (LOAD)
-    reg         o_out_valid_r;        // streaming output valid
-    reg signed [13:0] o_out_data_r;   
+    //reg         o_op_ready_r;         // pulse when ready for next op
+    //reg         o_in_ready_r;         // ready to accept input (LOAD)
+    //reg         o_out_valid_r;        // streaming output valid
+    //reg signed [13:0] o_out_data_r;   
 
     // -----------------------------
     // Global state / registers
@@ -117,6 +117,7 @@ module core #(
     reg  [7:0] sram_a [0:SRAM_COUNT-1]; //Addresses (A[0] = LSB)
     reg  [7:0] sram_d [0:SRAM_COUNT-1]; // Data Inputs (D[0] = LSB)
     reg  [SRAM_COUNT_BITS-1:0] sram_select; // Which SRAM to use for current op
+    reg  [SRAM_COUNT_BITS-1:0] sram_select_r;
     reg  [SRAM_SIZE-1:0] sram_addr; // Address within selected SRAM
 
     genvar gi;
@@ -156,13 +157,15 @@ module core #(
     // LOAD engine
     // -----------------------------
     reg [10:0] load_cnt; // 0..2047
-/*
+
     // -----------------------------
     // DISPLAY streamer counters (channel-major after 2×2 raster)
     // -----------------------------
     reg [5:0]  disp_c;   // up to 32, 控制正在輸出的 channel
     reg [1:0]  disp_xy;  // 0:(0,0) 1:(1,0) 2:(0,1) 3:(1,1), 控制在該 channel 裡的 2×2 小 tile 座標
-    reg [13:0] stream_dat; //存放準備輸出的資料
+    reg        disp_done;
+    reg [1:0]  disp_fsm;
+/*   reg [13:0] stream_dat; //存放準備輸出的資料
     reg        stream_vld; //標示當前輸出資料是否有效
 
     // -----------------------------
@@ -304,7 +307,7 @@ module core #(
     //reg  signed [15:0] gx_c, gy_c; reg [15:0] g_c;
     //reg  [15:0] g_n1, g_n2;
     //dir_t g_dir;
-
+    integer i;
 
     // Next-state (combinational) for simple stream datapath
     always @(*) begin
@@ -314,6 +317,12 @@ module core #(
             o_in_ready = 1'b0;
             sram_cen = 1'b1; // default disable
             sram_wen = 4'b1; // default read
+            o_out_valid = 1'b0;
+            o_out_data = 14'sd0;
+            for (i = 0; i < SRAM_COUNT; i = i + 1) begin
+                sram_a[i] = 9'd0;   // 嘗試清零
+                sram_d[i] = 8'd0; // 嘗試清零
+            end
         case (state)
             S_RESET: begin
 
@@ -328,7 +337,7 @@ module core #(
 
             end
             S_LOAD: begin
-                o_in_ready = 1'b0;
+                o_in_ready = 1'b1;
                 sram_cen = 1'b1;
                 {sram_select, sram_addr} = RS_order2mem_addr(load_cnt);
                     sram_wen[sram_select] = 1'b0; // write enable
@@ -352,22 +361,26 @@ module core #(
             end
             S_SCALE_U: begin
 
+            end
+            S_DISPLAY: begin
+                o_out_valid = o_out_data_r;
+                sram_cen = 1'b0;
+                if (disp_xy == 2'd0) begin
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+0, origin_y+0, disp_c);
+                end else if (disp_xy == 2'd1) begin
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+1, origin_y+0, disp_c);
+                end else if (disp_xy == 2'd2) begin
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+0, origin_y+1, disp_c);
+                end else begin
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+1, origin_y+1, disp_c);
+                end
+                sram_wen[sram_select] = 1'b1; // read
+                sram_a[sram_select]   = sram_addr;
+                if (o_out_valid) begin
+                    o_out_data = sram_d[sram_select];
+                end
             end    
-            
-            // S_DISPLAY: begin
-            //     // Output order: for ch=0..depth-1: (0,0),(1,0),(0,1),(1,1)
-            //     stream_vld = 1'b1;
-            //     unique case (disp_xy)
-            //         2'd0: stream_dat = {6'd0, rd_mem(origin_x+0, origin_y+0, disp_c)};
-            //         2'd1: stream_dat = {6'd0, rd_mem(origin_x+1, origin_y+0, disp_c)};
-            //         2'd2: stream_dat = {6'd0, rd_mem(origin_x+0, origin_y+1, disp_c)};
-            //         default: stream_dat = {6'd0, rd_mem(origin_x+1, origin_y+1, disp_c)};
-            //     endcase
-            // end
-            // default: begin
-            //     stream_vld = 1'b0;
-            //     stream_dat = 14'sd0;
-            // end
+
         endcase
     end
 
@@ -379,17 +392,18 @@ module core #(
             //i_op_mode_r  <= 4'd0;
             //i_in_valid_r <= 1'b0;
             //i_in_data_r  <= 8'd0;
-            o_op_ready_r  <= 1'b0;
-            o_in_ready_r  <= 1'b0;
+            //o_op_ready_r  <= 1'b0;
+            //o_in_ready_r  <= 1'b0;
             o_out_valid_r <= 1'b0;
-            o_out_data_r  <= 14'sd0;
+            //o_out_data_r  <= 14'sd0;
 
             origin_x    <= 3'd0;
             origin_y    <= 3'd0;
             depth_sel   <= DEPTH_32; // default 32
-            // load_cnt    <= 12'd0;
-            // disp_c      <= 6'd0;
-            // disp_xy     <= 2'd0;
+            load_cnt    <= 11'd0;
+            disp_c      <= 6'd0;
+            disp_xy     <= 2'd0;
+            disp_done   <= 1'b0;
             // conv_xy     <= 2'd0;
             // conv_c      <= 6'd0;
             // conv_ky     <= 2'd0;
@@ -495,26 +509,33 @@ module core #(
                 S_SCALE_U: begin
                     if (depth_sel < DEPTH_32) depth_sel <= depth_sel + 2'd1;
                     state <= S_O_OP_READY;
-                end
-                      
+                end                      
 
                 // ================= DISPLAY STREAM =================
                 S_DISPLAY: begin
-                    //o_out_valid <= stream_vld;
-                    //o_out_data  <= stream_dat;
-                    if (stream_vld) begin
-                        if (disp_xy == 2'd3) begin
-                            disp_xy <= 2'd0;
-                            if (disp_c + 6'd1 < depth_value(depth_sel)) begin
-                                disp_c <= disp_c + 6'd1;
-                            end else begin
-                                // done
-                                o_out_valid <= 1'b0;
-                                o_op_ready  <= 1'b1;
-                                state       <= S_WAIT_OP;
-                            end
-                        end else begin
-                            disp_xy <= disp_xy + 2'd1;
+                    case (disp_fsm)
+                        2'd0: begin
+                            
+                        end
+                        2'd1: begin
+                            // Active state
+                        end
+
+                    endcase
+                    sram_select_r <= sram_select;
+                    
+                    if(disp_done) begin
+                        o_out_valid_r <= 1'b0;
+                        state       <= S_O_OP_READY;
+                    end else begin
+                        o_out_valid_r <= 1'b1;
+                        disp_done <= 1'b0;
+                        disp_xy <= disp_xy + 2'd1;
+                    end
+                    if (disp_xy == 2'd3) begin
+                        disp_xy <= 2'd0;
+                        if (disp_c + 6'd1 < depth_value(depth_sel)) begin
+                            disp_c <= disp_c + 6'd1;
                         end
                     end
                 end
