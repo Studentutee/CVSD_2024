@@ -347,6 +347,12 @@ module core #(
             S_ORG_D: begin
 
             end
+            S_SCALE_D: begin
+
+            end
+            S_SCALE_U: begin
+
+            end
             // S_DISPLAY: begin
             //     // Output order: for ch=0..depth-1: (0,0),(1,0),(0,1),(1,1)
             //     stream_vld = 1'b1;
@@ -378,8 +384,8 @@ module core #(
             o_out_data_r  <= 14'sd0;
 
             origin_x    <= 3'd0;
-            // origin_y    <= 3'd0;
-            // depth_sel   <= DEPTH_32; // default 32
+            origin_y    <= 3'd0;
+            depth_sel   <= DEPTH_32; // default 32
             // load_cnt    <= 12'd0;
             // disp_c      <= 6'd0;
             // disp_xy     <= 2'd0;
@@ -480,23 +486,14 @@ module core #(
                     if (origin_y < 3'd6) origin_y <= origin_y + 3'd1;
                     state <= S_O_OP_READY;
                 end
-
-
                 // ================= SCALE DEPTH =================
-                S_SCALE: begin
-                    case (i_op_mode_r)
-                        OP_SCALE_D: begin
-                            if (depth_sel == DEPTH_32) depth_sel <= DEPTH_16;
-                            else if (depth_sel == DEPTH_16) depth_sel <= DEPTH_8;
-                            // else keep at 8
-                        end
-                        OP_SCALE_U: begin
-                            if (depth_sel == DEPTH_8) depth_sel <= DEPTH_16;
-                            else if (depth_sel == DEPTH_16) depth_sel <= DEPTH_32;
-                            // else keep at 32
-                        end
-                    endcase
-                    o_op_ready <= 1'b1; state <= S_WAIT_OP;
+                S_SCALE_D: begin
+                    if (depth_sel > DEPTH_8) depth_sel <= depth_sel - 2'd1;
+                    state <= S_O_OP_READY;
+                end
+                S_SCALE_U: begin
+                    if (depth_sel < DEPTH_32) depth_sel <= depth_sel + 2'd1;
+                    state <= S_O_OP_READY;
                 end
 
                 // ================= DISPLAY STREAM =================
