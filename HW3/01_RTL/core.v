@@ -96,11 +96,11 @@ module core #(
     reg [1:0] depth_sel;           // DEPTH_8/16/32 (default 32)
 
     // Helper: decode numeric depth
-    function automatic [5:0] depth_value(input [1:0] dsel);
+    function automatic [4:0] depth_value(input [1:0] dsel);
         case (dsel)
-            DEPTH_8:  depth_value = 6'd8;
-            DEPTH_16: depth_value = 6'd16;
-            default:  depth_value = 6'd32;
+            DEPTH_8:  depth_value = 5'd7;
+            DEPTH_16: depth_value = 5'd15;
+            default:  depth_value = 5'd31;
         endcase
     endfunction
 
@@ -160,7 +160,7 @@ module core #(
     // -----------------------------
     // DISPLAY streamer counters (channel-major after 2×2 raster)
     // -----------------------------
-    reg [5:0]  disp_c;   // up to 32, 控制正在輸出的 channel
+    reg [4:0]  disp_c;   // up to 32, 控制正在輸出的 channel
     reg [1:0]  disp_xy;  // 0:(0,0) 1:(1,0) 2:(0,1) 3:(1,1), 控制在該 channel 裡的 2×2 小 tile 座標
     reg [1:0]  disp_fsm; 
 
@@ -399,6 +399,9 @@ module core #(
                             sram_a[3]   = sram_addr;
                         end
                     end
+                    2'd2: begin
+
+                    end
                 endcase
             end  
 
@@ -422,7 +425,7 @@ module core #(
             origin_y    <= 3'd0;
             depth_sel   <= DEPTH_32; // default 32
             load_cnt    <= 11'd0;
-            disp_c      <= 6'd0;
+            disp_c      <= 5'd0;
             disp_xy     <= 2'd0;
             disp_fsm    <= 2'd0;
 
@@ -553,11 +556,11 @@ module core #(
                             sram_select_r <= sram_select;
                             disp_xy <= disp_xy + 2'd1;
                             if (disp_xy == 2'd3) begin
-                                if (disp_c + 6'd1 < depth_value(depth_sel)) begin
-                                    disp_c <= disp_c + 6'd1;
+                                if (disp_c < depth_value(depth_sel)) begin
+                                    disp_c <= disp_c + 5'd1;
                                 end else begin
                                     disp_fsm <= 2'd2;
-                                    disp_c <= 6'd0;
+                                    disp_c <= 5'd0;
                                 end
                             end                                               
                         end
@@ -572,25 +575,28 @@ module core #(
                 // ================= CONVOLUTION (sequential MAC) =================
                 S_CONV: begin
                     case(conv_fsm)
-                        2'd0: begin
+                        2'd0: begin //reset
                             conv_scan_point_x <= origin_x - 4'd1; //if origin_x=000(unsigned), conv_scan_point_x <= 0000 - 0001 = 1111(unsigned)
                             conv_scan_point_y <= origin_y - 4'd1;
                             conv_x_4x4_cnt <= 3'd0;
                             conv_y_4x4_cnt <= 3'd0;
                             conv_c_4x4_cnt <= 5'd0;
-                            for (int i=0; i<4; i=i+1) begin
-                                for (int j=0; j<4; j=j+1) begin
+                            for (i=0; i<4; i=i+1) begin
+                                for (j=0; j<4; j=j+1) begin
                                     conv_acc_4_in_1[i][j] <= (SRAM_COUNT_BITS+8)'d0;
                                 end
                             end
-                            conv_fsm <= 2'd1;  
+                            conv_fsm <= 2'd1;
                         end
-                        2'd1: begin
-                            if(conv_scan_point_x > 3'd7 || conv_scan_point_y > 3'd7)begin
+                        2'd1: begin 
+                            if(conv_scan_point_x > 3'd7 || conv_scan_point_y > 3'd7)begin //zeropadding
                                 conv_acc_4_in_1[conv_y_4x4_cnt][conv_x_4x4_cnt] <= (SRAM_COUNT_BITS+8)'d0;
                                 conv_fsm <= 2'd2;
                             end else begin
+                                if(conv_c_4x4_cnt + 5'd3 != depth_value(depth_sel)) begin//還沒到底
+                                    
                                 
+                               end
                             end                         
                         end
                         2'd2: begin
