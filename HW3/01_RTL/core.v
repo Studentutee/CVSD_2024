@@ -78,10 +78,9 @@ module core #(
         S_ORG_D     = 5'd8,
         S_SCALE_D   = 5'd9,
         S_SCALE_U   = 5'd10,
+        S_DISPLAY   = 5'd11,
+        S_CONV      = 5'd12,
 
-        S_DISPLAY   = 5'd5,
-        S_CONV_ACC  = 5'd6,
-        S_CONV_DONE = 5'd7,
         S_MED_PREP  = 5'd8,
         S_MED_SORT  = 5'd9,
         S_SOBEL_ACC = 5'd10,
@@ -163,20 +162,22 @@ module core #(
     // -----------------------------
     reg [5:0]  disp_c;   // up to 32, 控制正在輸出的 channel
     reg [1:0]  disp_xy;  // 0:(0,0) 1:(1,0) 2:(0,1) 3:(1,1), 控制在該 channel 裡的 2×2 小 tile 座標
-
-/*   reg [13:0] stream_dat; //存放準備輸出的資料
-    reg        stream_vld; //標示當前輸出資料是否有效
+    reg [1:0]  disp_fsm; 
 
     // -----------------------------
     // CONV accumulator (process 1 output pixel at a time → 4 outputs)
     // -----------------------------
-    reg [1:0]  conv_xy;      // which of 4 outputs we are accumulating
-    reg [5:0]  conv_c;       // channel index for accumulation
-    reg [1:0]  conv_ky, conv_kx; // 0..2 for kernel loops
-    //reg [23:0] conv_acc;     // wide accumulator (enough for 32*4080 ≈ 130560)
-    reg        conv_do_add;
-*/
-/*     // -----------------------------
+    reg [1:0]   conv_xy;      // which of 4 outputs we are accumulating  
+    reg [1:0]   conv_ky, conv_kx; // 0..2 for kernel loops
+    reg [SRAM_COUNT_BITS+7:0] conv_acc_4_in_1 [3:0][3:0];
+    reg [16:0]  conv_acc;
+    reg [1:0]   conv_fsm;
+    reg [3:0]   conv_scan_point_x;
+    reg [3:0]   conv_scan_point_y;
+    reg [2:0]   conv_x_4x4_cnt;
+    reg [2:0]   conv_y_4x4_cnt;
+    reg [4:0]   conv_c_4x4_cnt;       // channel index for accumulation
+/*  // -----------------------------
     // MEDIAN buffers & sorter (median of 9)
     // -----------------------------
     reg [1:0]  med_xy;       // 0..3
@@ -307,6 +308,7 @@ module core #(
     //reg  [15:0] g_n1, g_n2;
     //dir_t g_dir;
     integer i;
+    integer j;
 
     // Next-state (combinational) for simple stream datapath
     always @(*) begin
@@ -376,9 +378,29 @@ module core #(
                 sram_wen[sram_select] = 1'b1; // read
                 sram_a[sram_select]   = sram_addr;
                 if (o_out_valid) begin
-                    o_out_data = sram_d[sram_select_R];
+                    o_out_data = sram_d[sram_select_r];
                 end
-            end    
+            end
+            S_CONV: begin
+                sram_cen = 1'b0;
+                case (conv_fsm)
+                    2'd0: begin
+                        
+                    end
+                    2'd1: begin
+                        if(conv_scan_point_x > 3'd7 || conv_scan_point_y > 3'd7)begin
+
+                        end else begin
+                            {sram_select, sram_addr} = xyc2mem_addr(conv_scan_point_x, conv_scan_point_y, conv_c_4x4_cnt);
+                            sram_wen = 4'b1111; // read
+                            sram_a[0]   = sram_addr;
+                            sram_a[1]   = sram_addr;
+                            sram_a[2]   = sram_addr;
+                            sram_a[3]   = sram_addr;
+                        end
+                    end
+                endcase
+            end  
 
         endcase
     end
@@ -402,11 +424,20 @@ module core #(
             load_cnt    <= 11'd0;
             disp_c      <= 6'd0;
             disp_xy     <= 2'd0;
-            // conv_xy     <= 2'd0;
-            // conv_c      <= 6'd0;
-            // conv_ky     <= 2'd0;
-            // conv_kx     <= 2'd0;
-            // conv_acc    <= 24'd0;
+            disp_fsm    <= 2'd0;
+
+
+            conv_xy     <= 2'd0;           
+            conv_ky     <= 2'd0;
+            conv_kx     <= 2'd0;
+            conv_acc    <= 24'd0
+            conv_fsm    <= 2'd0;
+            // conv_scan_point_x <= 4'd0;
+            // conv_scan_point_y <= 4'd0;
+            // conv_x_4x4_cnt <= 3'd0;
+            // conv_y_4x4_cnt <= 3'd0;
+            // conv_c_4x4_cnt <= 5'd0;
+            
             // med_xy      <= 2'd0;
             // med_ch      <= 2'd0;
             // sob_xy      <= 2'd0;
@@ -454,7 +485,7 @@ module core #(
                                 state   <= S_DISPLAY;
                             end
                             OP_CONV: begin
-                                //conv_xy  <= 2'd0; conv_c <= 6'd0; conv_ky<=2'd0; conv_kx<=2'd0; conv_acc<=24'd0;
+                                //conv_xy  <= 2'd0; conv_c_4x4_cnt <= 6'd0; conv_ky<=2'd0; conv_kx<=2'd0; conv_acc<=24'd0;
                                 state    <= S_CONV_ACC;
                             end
                             OP_MEDIAN: begin
@@ -539,49 +570,46 @@ module core #(
                 end
 
                 // ================= CONVOLUTION (sequential MAC) =================
-                S_CONV_ACC: begin
-                    // Accumulate: conv_acc += k_gauss * pixel across (ky,kx,c)
-                    // Compute current window coord for this conv_xy
-                    integer base_x, base_y, ch;
-                    integer wx, wy; reg [7:0] px; reg [2:0] w;
-                    base_x = origin_x + (conv_xy[0] ? 1 : 0);
-                    base_y = origin_y + (conv_xy[1] ? 1 : 0);
-                    wx = base_x + (conv_kx - 2'd1); // -1,0,1
-                    wy = base_y + (conv_ky - 2'd1);
-                    ch = conv_c;
-                    px = rd_px(wx, wy, ch);
-                    w  = k_gauss(conv_ky, conv_kx);
-                    conv_acc <= conv_acc + (px * w); // implicit zero extend
-
-                    // Advance inner loops: kx -> ky -> c
-                    if (conv_kx == 2'd2) begin
-                        conv_kx <= 2'd0;
-                        if (conv_ky == 2'd2) begin
-                            conv_ky <= 2'd0;
-                            if (conv_c + 6'd1 < depth_value(depth_sel)) begin
-                                conv_c <= conv_c + 6'd1;
-                            end else begin
-                                // Finish this pixel: round to nearest (÷16)
-                                o_out_valid <= 1'b1;
-                                o_out_data  <= (conv_acc + 24'd8) >>> 4; // 14-bit is enough
-                                // Prepare for next output pixel
-                                conv_acc <= 24'd0; conv_c <= 6'd0;
-                                if (conv_xy == 2'd3) begin
-                                    state <= S_CONV_DONE;
-                                end else begin
-                                    conv_xy <= conv_xy + 2'd1;
+                S_CONV: begin
+                    case(conv_fsm)
+                        2'd0: begin
+                            conv_scan_point_x <= origin_x - 4'd1; //if origin_x=000(unsigned), conv_scan_point_x <= 0000 - 0001 = 1111(unsigned)
+                            conv_scan_point_y <= origin_y - 4'd1;
+                            conv_x_4x4_cnt <= 3'd0;
+                            conv_y_4x4_cnt <= 3'd0;
+                            conv_c_4x4_cnt <= 5'd0;
+                            for (int i=0; i<4; i=i+1) begin
+                                for (int j=0; j<4; j=j+1) begin
+                                    conv_acc_4_in_1[i][j] <= (SRAM_COUNT_BITS+8)'d0;
                                 end
                             end
-                        end else begin
-                            conv_ky <= conv_ky + 2'd1;
+                            conv_fsm <= 2'd1;  
                         end
-                    end else begin
-                        conv_kx <= conv_kx + 2'd1;
-                    end
-                end
-
-                S_CONV_DONE: begin
-                    o_op_ready <= 1'b1; state <= S_WAIT_OP;
+                        2'd1: begin
+                            if(conv_scan_point_x > 3'd7 || conv_scan_point_y > 3'd7)begin
+                                conv_acc_4_in_1[conv_y_4x4_cnt][conv_x_4x4_cnt] <= (SRAM_COUNT_BITS+8)'d0;
+                                conv_fsm <= 2'd2;
+                            end else begin
+                                
+                            end                         
+                        end
+                        2'd2: begin
+                            if(conv_x_4x4_cnt == 3'd3) begin
+                                conv_x_4x4_cnt <= 3'd0;
+                                if(conv_y_4x4_cnt == 3'd3) begin
+                                        conv_y_4x4_cnt <= 3'd0;
+                                        state <= S_O_OP_READY;
+                                    end else begin
+                                        conv_y_4x4_cnt <= conv_y_4x4_cnt + 3'd1;
+                                    end
+                                end else begin
+                                    conv_x_4x4_cnt <= conv_x_4x4_cnt + 3'd1;
+                            end
+                        end
+                        default: begin
+                            state <= S_O_OP_READY;
+                        end
+                    endcase
                 end
 
                 // ================= MEDIAN FILTER (first 4 channels) =================
