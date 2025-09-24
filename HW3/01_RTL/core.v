@@ -621,7 +621,7 @@ module core #(
                                 conv_acc_4x4[conv_y_4x4_cnt][conv_x_4x4_cnt] <= conv_acc_4x4[conv_y_4x4_cnt][conv_x_4x4_cnt] + (sram_d[0] + sram_d[1] + sram_d[2] + sram_d[3]);
                                 sram_out_valid <= 1'b0;
                             end
-                            
+
                             if (conv_kx == 2'd0 && conv_ky == 2'd0) begin
                                 conv_acc <= conv_acc_4x4[conv_ky+conv_yx[1]][conv_kx+conv_yx[0]] << GAUSS_KERNEL[conv_ky][conv_kx];//conv_ky+conv_yx[1]之後可以優化？？
                             end else begin
@@ -656,6 +656,7 @@ module core #(
 
                 // ================= MEDIAN FILTER (first 4 channels) =================
                 S_MED_PREP: begin
+                    /*
                     // Load 3×3 window into med_win[] for (med_ch, med_xy)
                     integer bx, by, dx, dy, idx;
                     bx = origin_x + (med_xy[0] ? 1 : 0);
@@ -668,9 +669,11 @@ module core #(
                         end
                     end
                     state <= S_MED_SORT;
+                    */
                 end
 
                 S_MED_SORT: begin
+                    /*
                     median9_sort();
                     // Output median (element 4)
                     o_out_valid <= 1'b1;
@@ -686,18 +689,22 @@ module core #(
                     end else begin
                         med_xy <= med_xy + 2'd1; state <= S_MED_PREP;
                     end
+                    */
                 end
 
                 // ================= SOBEL + NMS (first 4 channels) =================
                 S_SOBEL_ACC: begin
+                    /*
                     // Compute sram_center gradient & direction
                     integer bx, by; bx = origin_x + (sob_xy[0] ? 1 : 0); by = origin_y + (sob_xy[1] ? 1 : 0);
                     sobel_vec(bx, by, sob_ch, gx_c, gy_c, g_c);
                     g_dir <= sobel_dir(gx_c, gy_c);
                     state <= S_SOBEL_NMS;
+                    */
                 end
 
                 S_SOBEL_NMS: begin
+                    /*
                     integer bx, by; integer nx1, ny1, nx2, ny2;
                     bx = origin_x + (sob_xy[0] ? 1 : 0);
                     by = origin_y + (sob_xy[1] ? 1 : 0);
@@ -729,11 +736,11 @@ module core #(
                         end
                     end else begin
                         sob_xy <= sob_xy + 2'd1; state <= S_SOBEL_ACC;
-                    end
+                    end*/
                 end
 
                 default: begin
-                    state <= S_WAIT_OP;
+                    //state <= S_WAIT_OP;
                 end
             endcase
         end
