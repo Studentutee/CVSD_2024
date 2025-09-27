@@ -72,7 +72,7 @@ module core #(
     state_t state_next;
 
     // 宣告一個 3×3 的常數矩陣
-    localparam [2:0] GAUSS_KERNEL [0:2][0:2] = '{
+    localparam [2:0] GAUSS_KERNEL [2:0][2:0] = '{
         '{3'd0, 3'd1, 3'd0},  // row 0: (ky=0)
         '{3'd1, 3'd2, 3'd1},  // row 1: (ky=1)
         '{3'd0, 3'd1, 3'd0}   // row 2: (ky=2)
@@ -111,11 +111,11 @@ module core #(
     // bank = addr[10:8], off = addr[7:0]
     // -----------------------------
 
-    wire [7:0] sram_q [0:SRAM_COUNT-1]; // Data Outputs (Q[0] = LSB)
+    wire [7:0] sram_q [SRAM_COUNT-1:0]; // Data Outputs (Q[0] = LSB)
     reg        sram_cen; // Chip Enable
-    reg  [0:SRAM_COUNT-1] sram_wen;
-    reg  [8:0] sram_a [0:SRAM_COUNT-1]; //Addresses (A[0] = LSB)
-    reg  [7:0] sram_d [0:SRAM_COUNT-1]; // Data Inputs (D[0] = LSB)
+    reg  [SRAM_COUNT-1:0] sram_wen;
+    reg  [8:0] sram_a [SRAM_COUNT-1:0]; //Addresses (A[0] = LSB)
+    reg  [7:0] sram_d [SRAM_COUNT-1:0]; // Data Inputs (D[0] = LSB)
     reg  [SRAM_COUNT_BITS-1:0] sram_select; // Which SRAM to use for current op
     reg  [SRAM_COUNT_BITS-1:0] sram_select_r;
     reg  [8:0] sram_addr; // Address within selected SRAM
