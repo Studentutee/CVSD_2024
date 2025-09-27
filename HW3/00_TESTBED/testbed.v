@@ -51,6 +51,7 @@ reg  [13:0] golden_mem [0:4095];
 // ==============================================
 // TODO: Declare regs and wires you need
 // ==============================================
+reg  [13:0] out_data_save [0:4095];
 reg [10:0]  indata_mem_cnt = 0;
 reg [9:0]   opmode_mem_cnt = 0;
 reg [11:0]  golden_mem_cnt = 0;
@@ -116,6 +117,12 @@ always @(negedge clk)begin
             while(op_ready) @(negedge clk);
             op_valid = 1;
             if(opmode_mem[opmode_mem_cnt] === 4'bxxxx) begin
+                for(int k = 0; k < 4096; k = k + 1) begin
+                    if(out_data_save[k] !== golden_mem[k])begin
+                        $display("No.%d: %b",k,out_data_save[k]);
+                        err_cnt = err_cnt + 1;
+                    end
+                end
                 finish_display;
                 $finish;
             end
@@ -132,16 +139,14 @@ always @(negedge clk)begin
                 end
                 in_valid = 0;
             end
-        end
-        
+        end    
     end
 end
 
 always @(negedge clk) begin
     if(out_valid == 1)begin
-        if(out_data !== golden_mem[j])begin
-            err_cnt = err_cnt + 1;
-        end
+        out_data_save[j] = out_data;
+        j = j + 1;
     end
 end
 

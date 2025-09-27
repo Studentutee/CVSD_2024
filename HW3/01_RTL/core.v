@@ -195,7 +195,7 @@ module core #(
             o_op_ready = 1'b0;
             o_in_ready = 1'b0;
             sram_cen = 1'b1; // default disable
-            sram_wen = 4'b1; // default read
+            sram_wen = 4'b1111; // default read
             sram_select = sram_select_r;
             sram_out_valid = sram_out_valid_r;
             sram_addr = 9'd0;
@@ -289,13 +289,12 @@ module core #(
             end
             S_LOAD: begin
                 o_in_ready = 1'b1;
-                sram_cen = 1'b1;
+                sram_cen = 1'b0;
                 
                 {sram_select, sram_addr} = RS_order2mem_addr(load_cnt_r);
                 sram_wen[sram_select] = 1'b0; // write enable
                 sram_a[sram_select]   = sram_addr;
                 sram_d[sram_select]   = i_in_data_r;
-                sram_wen[sram_select] = 1'b0; // write
                 if (i_in_valid_r) begin
                     if (load_cnt_r == IMG_PIX-1) begin                                                     
                         state_next  = S_O_OP_READY;
