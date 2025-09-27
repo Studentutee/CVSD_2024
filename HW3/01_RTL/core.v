@@ -45,7 +45,7 @@ module core #(
     // -----------------------------
     // Global state / registers
     // -----------------------------
-    typedef enum logic [4:0] { //enum：定義一組有名字的常數（列舉）。
+    typedef enum logic [4:0] { //enum: defines a set of named constants (enumeration).
         S_RESET     = 5'd0, //localparam S_RESET    = 5'd0;
         S_START     = 5'd1,
         S_O_OP_READY= 5'd2,
@@ -55,7 +55,6 @@ module core #(
         S_ORG_L     = 5'd6,
         S_ORG_U     = 5'd7,
         S_ORG_D     = 5'd8,
-
         S_SCALE_D   = 5'd9,
         S_SCALE_U   = 5'd10,
         S_DISPLAY   = 5'd11,
@@ -170,15 +169,16 @@ module core #(
     reg [1:0]   conv_ky, conv_kx; // 0..2 for kernel loops
     reg [1:0]   conv_ky_r, conv_kx_r;
     reg         conv_kernel_done;
-    reg         conv_kernel_done_r;
     reg [12:0]  conv_acc_4x4 [3:0][3:0];
     reg [12:0]  conv_acc_4x4_r [3:0][3:0];
     reg [16:0]  conv_acc;
     reg [16:0]  conv_acc_r;
-    reg [2:0]   conv_fsm;
-    reg [2:0]   conv_fsm_r;
+    reg [1:0]   conv_fsm;
+    reg [1:0]   conv_fsm_r;
     reg [3:0]   conv_scan_point_x;
+    reg [3:0]   conv_scan_point_x_r;
     reg [3:0]   conv_scan_point_y;
+    reg [3:0]   conv_scan_point_y_r;
     reg [1:0]   conv_x_4x4_cnt;
     reg [1:0]   conv_x_4x4_cnt_r;
     reg [1:0]   conv_y_4x4_cnt;
@@ -186,13 +186,12 @@ module core #(
     reg [4:0]   conv_c_4x4_cnt;       // channel index for accumulation
     reg [4:0]   conv_c_4x4_cnt_r;
 
-    integer i;
-    integer j;
+    //integer i;
+    //integer j;
 
     // Next-state (combinational) for simple stream datapath
     always @(*) begin
-        //stream_vld   = 1'b0;
-        //stream_dat   = 14'sd0;
+            state_next = state;
             o_op_ready = 1'b0;
             o_in_ready = 1'b0;
             sram_cen = 1'b1; // default disable
@@ -221,11 +220,10 @@ module core #(
             conv_x_4x4_cnt = conv_x_4x4_cnt_r;
             conv_y_4x4_cnt = conv_y_4x4_cnt_r;
             conv_c_4x4_cnt = conv_c_4x4_cnt_r;
+            conv_acc_4x4 = conv_acc_4x4_r;
             conv_kernel_done = 1'b0;
 
-            o_out_valid = 1'b0;
-            o_out_data = 14'sd0;
-            for (i = 0; i < SRAM_COUNT; i = i + 1) begin
+            for (int i = 0; i < SRAM_COUNT; i = i + 1) begin
                 sram_a[i] = 9'd0;   // 嘗試清零
                 sram_d[i] = 8'd0; // 嘗試清零
             end
@@ -248,7 +246,7 @@ module core #(
                             state_next = S_LOAD;
                         end
                         OP_ORG_R : begin
-                            state_next = S_ORG_SHIFT;
+                            state_next = S_ORG_R;
                         end
                         OP_ORG_L : begin
                             state_next = S_ORG_L;
@@ -292,17 +290,21 @@ module core #(
             S_LOAD: begin
                 o_in_ready = 1'b1;
                 sram_cen = 1'b1;
+                
                 {sram_select, sram_addr} = RS_order2mem_addr(load_cnt_r);
                 sram_wen[sram_select] = 1'b0; // write enable
                 sram_a[sram_select]   = sram_addr;
                 sram_d[sram_select]   = i_in_data_r;
+                sram_wen[sram_select] = 1'b0; // write
                 if (i_in_valid_r) begin
-                    load_cnt  = load_cnt_r + 11'd1;
+                    if (load_cnt_r == IMG_PIX-1) begin                                                     
+                        state_next  = S_O_OP_READY;
+                        load_cnt = 11'd0;
+                    end else begin
+                        load_cnt  = load_cnt_r + 11'd1;
+                    end
                 end
-                if (load_cnt_r == IMG_PIX-1) begin                                                     
-                    state_next  = S_O_OP_READY;
-                    load_cnt = 11'd0;
-                end
+
             end
             S_ORG_R: begin
                 if (origin_x < 3'd6) origin_x = origin_x_r + 3'd1;
@@ -347,11 +349,11 @@ module core #(
                         sram_out_valid = 1'b1;
                         disp_yx = disp_yx_r + 2'd1;
                         if (disp_yx == 2'd3) begin
-                            if (disp_c < depth_value(depth_sel)) begin
+                            if (disp_c_r < depth_value(depth_sel)) begin
                                 disp_c = disp_c_r + 5'd1;
                             end else begin
-                                disp_fsm_r = 2'd1;
-                                disp_c_r = 5'd0;
+                                disp_fsm = 2'd1;
+                                disp_c = 5'd0;
                             end
                         end
                     end
@@ -365,7 +367,7 @@ module core #(
             S_CONV: begin
                 sram_cen = 1'b0;
                 case (conv_fsm)
-                    3'd0: begin
+                    2'd0: begin
                         conv_kernel_done = 1'b0;
                         conv_scan_point_x = origin_x - 4'd1; //if origin_x=000(unsigned), conv_scan_point_x <= 0000 - 0001 = 1111(unsigned)
                         conv_scan_point_y = origin_y - 4'd1;
@@ -376,16 +378,15 @@ module core #(
                         conv_ky = 2'd0;
                         conv_kx = 2'd0;
                         conv_acc = 24'd0;
-                        conv_fsm = 3'd0;
                         conv_acc = 17'd0;
-                        for (i=0; i<4; i=i+1) begin
-                            for (j=0; j<4; j=j+1) begin
-                                conv_acc_4x4[i][j] <= 'd0;//(SRAM_COUNT_BITS+8)'d0;
+                        for (int i=0; i<4; i=i+1) begin
+                            for (int j=0; j<4; j=j+1) begin
+                                conv_acc_4x4[i][j] = 'd0;//(SRAM_COUNT_BITS+8)'d0;
                             end
                         end
-                        conv_fsm <= 2'd1;
+                        conv_fsm = 2'd1;
                     end
-                    3'd1: begin
+                    2'd1: begin
                         sram_wen = 4'b1111; // read
                         //因為判別zero padding的需要，conv_scan_point_x為4bits的長度
                         {sram_select, sram_addr} = xyc2mem_addr(conv_scan_point_x_r[2:0], conv_scan_point_y_r[2:0], conv_c_4x4_cnt_r);
@@ -404,10 +405,10 @@ module core #(
                                 conv_scan_point_x = conv_scan_point_x_r + 3'd1;
                                 conv_x_4x4_cnt = conv_x_4x4_cnt_r + 2'd1;
                                 if(conv_x_4x4_cnt_r == 2'd3)begin
-                                    conv_scan_point_y <= conv_scan_point_y_r + 3'd1;
+                                    conv_scan_point_y = conv_scan_point_y_r + 3'd1;
                                     conv_y_4x4_cnt = conv_y_4x4_cnt_r + 2'd1;
                                     if(conv_y_4x4_cnt_r == 2'd3) begin
-                                        conv_fsm = 3'd2; //finish
+                                        conv_fsm = 2'd2; //finish
                                     end
                                 end
                                         
@@ -419,12 +420,9 @@ module core #(
                             end
                         end     
                     end
-                    3'd2: begin
-                        o_out_valid = conv_kernel_done;
-                        o_out_data = {1'b0, conv_acc[16:4]};
-
+                    default: begin
                         if(sram_out_valid_r) begin //the last memory output save to acc
-                            conv_acc_4x4_r[conv_y_4x4_cnt_r][conv_x_4x4_cnt_r] = conv_acc_4x4[conv_y_4x4_cnt_r][conv_x_4x4_cnt_r] + (sram_q[0] + sram_q[1] + sram_q[2] + sram_q[3]);
+                            conv_acc_4x4[conv_y_4x4_cnt_r][conv_x_4x4_cnt_r] = conv_acc_4x4_r[conv_y_4x4_cnt_r][conv_x_4x4_cnt_r] + (sram_q[0] + sram_q[1] + sram_q[2] + sram_q[3]);
                             sram_out_valid = 1'b0;
                         end
 
@@ -442,12 +440,11 @@ module core #(
                                 conv_kernel_done = 1'b1; // this kernel done
                                 conv_yx = conv_yx_r + 2'd1; 
                                 if(conv_yx == 2'd3) begin //all done
-                                    conv_fsm = 3'd3;
+                                    conv_fsm = 2'd3;
                                 end  
                             end else begin
                                 conv_ky = conv_ky_r + 2'd1;
                             end
-
                         end else begin
                             conv_kx = conv_kx_r + 2'd1;
                             conv_kernel_done = 1'b0;
@@ -455,7 +452,9 @@ module core #(
                     end
                 endcase
             end
+            default: begin
 
+            end
         endcase
     end
 
@@ -469,12 +468,12 @@ module core #(
             i_in_data_r  <= 8'd0;
             //o_op_ready_r  <= 1'b0;
             //o_in_ready_r  <= 1'b0;
-            //o_out_valid_r <= 1'b0;
-            //o_out_data_r  <= 14'sd0;
+            o_out_valid <= 1'b0;
+            o_out_data  <= 14'sd0;
             load_cnt_r  <= 11'd0;
 
             sram_select_r <= 2'd0;
-            sram_out_valid <= 1'b0;
+            sram_out_valid_r <= 1'b0;
             origin_x_r    <= 3'd0;
             origin_y_r    <= 3'd0;
             depth_sel_r <= DEPTH_32;
@@ -497,54 +496,49 @@ module core #(
             // sob_xy      <= 2'd0;
             // sob_ch      <= 2'd0;
         end else begin
+            state <= state_next;
+            i_op_valid_r <= i_op_valid;
+            i_op_mode_r  <= i_op_mode;
+            i_in_data_r <= i_in_data;
+            i_in_valid_r <= i_in_valid;
             case (state)
                 S_RESET: begin
-                    state <= state_next;
+                    
                 end
                 S_START: begin
-                    state <= state_next;
+                    
                 end
                 S_O_OP_READY: begin
-                    state <= state_next;
+                    
                 end
                 S_WAIT_OP: begin
-                    i_op_valid_r <= i_op_valid;
-                    i_op_mode_r  <= i_op_mode;
-                    state <= state_next;
+                    
                 end
 
                 S_LOAD: begin
                     // Accept data only when both i_in_valid_r & o_in_ready; write to memory
-                    i_in_data_r <= i_in_data;
-                    i_in_valid_r <= i_in_valid;
+
                     load_cnt_r    <= load_cnt;                                          
-                    state       <= state_next;
                 end
                 // ================= ORIGIN SHIFT =================
                 S_ORG_R: begin
                     origin_x_r <= origin_x;
-                    state <= state_next;
                 end
                 S_ORG_L: begin
                     origin_x_r <= origin_x;
-                    state <= state_next;
                 end
                 S_ORG_U: begin
                     origin_y_r <= origin_y;
-                    state <= state_next;
                 end
                 S_ORG_D: begin
                     origin_y_r <= origin_y;
-                    state <= state_next;
                 end
                 // ================= SCALE DEPTH =================
                 S_SCALE_D: begin
                     depth_sel_r <= depth_sel;
-                    state <= state_next;
                 end  
                 S_SCALE_U: begin
                     depth_sel_r <= depth_sel;
-                    state <= state_next;
                 end                      
 
                 // ================= DISPLAY STREAM =================
@@ -557,13 +551,11 @@ module core #(
                     disp_yx_r <= disp_yx;
                     disp_c_r <= disp_c;
                     disp_fsm_r <= disp_fsm;
-                    state <= state_next;
-
                 end
 
                 // ================= CONVOLUTION (sequential MAC) =================
                 S_CONV: begin
-                    if (conv_fsm_r == 3'd0) begin //all done
+                    if (conv_fsm_r == 2'd0) begin //all done
                         conv_acc_4x4_r <= conv_acc_4x4;
                     end else begin
                         conv_acc_4x4_r[conv_y_4x4_cnt][conv_x_4x4_cnt] <= conv_acc_4x4[conv_y_4x4_cnt][conv_x_4x4_cnt];
@@ -573,18 +565,17 @@ module core #(
                     conv_x_4x4_cnt_r <= conv_x_4x4_cnt;
                     conv_y_4x4_cnt_r <= conv_y_4x4_cnt;
                     conv_c_4x4_cnt_r <= conv_c_4x4_cnt;
-                    conv_acc_4x4_r <= conv_acc_4x4;
                 
                     conv_fsm_r <= conv_fsm;
                     
                     sram_out_valid_r <= sram_out_valid;      
 
                     conv_acc_r <= conv_acc;
-                                    
+                    conv_yx_r <= conv_yx;
                     conv_kx_r <= conv_kx;
                     conv_ky_r <= conv_ky;
-
-                    conv_kernel_done_r <= conv_kernel_done; 
+                    o_out_data <= {1'b0, conv_acc[16:4]};
+                    o_out_valid <= conv_kernel_done; 
                 end
 
                 // ================= MEDIAN FILTER (first 4 channels) =================

@@ -33,12 +33,12 @@
 
 module testbed;
 
-reg         clk, rst_n;
-reg        op_valid;
-reg [ 3:0] op_mode;
+reg        clk, rst_n;
+reg        op_valid = 0;
+reg [ 3:0] op_mode = 0;
 wire        op_ready;
-reg        in_valid;
-reg [ 7:0] in_data;
+reg        in_valid = 0;
+reg [ 7:0] in_data = 0;
 wire        in_ready;
 wire        out_valid;
 wire [13:0] out_data;
@@ -68,8 +68,9 @@ integer     read_mode_cnt = 0;
 
 // Write out waveform file
 initial begin
-  $fsdbDumpfile("core.fsdb");
-  $fsdbDumpvars(0, "+mda");
+    $fsdbDumpfile("core.fsdb");
+    $fsdbDumpvars(0, "+mda");
+    //$fsdbDumpMDA(1, testbed.u_core.GEN_SRAM[0].u_sram.mem);
 end
 
 
@@ -145,7 +146,7 @@ end
 
     task finish_display;
 	    begin
-	        if(err_cntr == 0) begin
+	        if(err_cnt == 0) begin
 	            $display("⠄⠄⠄⠄⠄⠄⠄⠈⠉⠁⠈⠉⠉⠙⠿⣿⣿⣿⣿⣿");    
 	            $display("⠄⠄⠄⠄⠄⠄⠄⠄⣀⣀⣀⠄⠄⠄⠄⠄⠹⣿⣿⣿");    
 	            $display("⠄⠄⠄⠄⠄⢐⣲⣿⣿⣯⠭⠉⠙⠲⣄⡀⠄⠈⢿⣿");    
