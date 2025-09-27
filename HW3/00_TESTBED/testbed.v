@@ -102,6 +102,7 @@ initial begin
     rst_n = 0; # ((`RST_DELAY - 0.25) * `CYCLE);
     rst_n = 1; # (         `MAX_CYCLE * `CYCLE);
     $display("Error! Runtime exceeded!");
+    //$writememh("sram[0].hex", testbed.u_core.GEN_SRAM[0].u_sram.mem);
     $finish;
 end
 
@@ -114,6 +115,10 @@ always @(negedge clk)begin
         if(op_ready == 1)begin
             while(op_ready) @(negedge clk);
             op_valid = 1;
+            if(opmode_mem[opmode_mem_cnt] === 4'bxxxx) begin
+                finish_display;
+                $finish;
+            end
             op_mode = opmode_mem[opmode_mem_cnt];
             opmode_mem_cnt = opmode_mem_cnt + 1;
             @(negedge clk);
@@ -127,10 +132,6 @@ always @(negedge clk)begin
                 end
                 in_valid = 0;
             end
-            if(read_mode_cnt > 1) begin
-                finish_display;
-                $finish;
-            end
         end
         
     end
@@ -138,7 +139,7 @@ end
 
 always @(negedge clk) begin
     if(out_valid == 1)begin
-        if(out_data != golden_mem[j])begin
+        if(out_data !== golden_mem[j])begin
             err_cnt = err_cnt + 1;
         end
     end
