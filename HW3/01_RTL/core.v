@@ -194,7 +194,7 @@ module core #(
             state_next = state;
             o_op_ready = 1'b0;
             o_in_ready = 1'b0;
-            sram_cen = 1'b1; // default disable
+            sram_cen = 1'b0; // default disable
             sram_wen = 4'b1111; // default read
             sram_select = sram_select_r;
             sram_out_valid = sram_out_valid_r;
@@ -289,7 +289,6 @@ module core #(
             end
             S_LOAD: begin
                 o_in_ready = 1'b1;
-                sram_cen = 1'b0;
                 
                 {sram_select, sram_addr} = RS_order2mem_addr(load_cnt_r);
                 sram_wen[sram_select] = 1'b0; // write enable
@@ -306,19 +305,19 @@ module core #(
 
             end
             S_ORG_R: begin
-                if (origin_x < 3'd6) origin_x = origin_x_r + 3'd1;
+                if (origin_x_r < 3'd6) origin_x = origin_x_r + 3'd1;
                 state_next = S_O_OP_READY;
             end
             S_ORG_L: begin
-                if (origin_x > 3'd0) origin_x = origin_x_r - 3'd1;
+                if (origin_x_r > 3'd0) origin_x = origin_x_r - 3'd1;
                 state_next = S_O_OP_READY;
             end
             S_ORG_U: begin
-                if (origin_y > 3'd0) origin_y = origin_y_r - 3'd1;
+                if (origin_y_r > 3'd0) origin_y = origin_y_r - 3'd1;
                 state_next = S_O_OP_READY;
             end
             S_ORG_D: begin
-                if (origin_y < 3'd6) origin_y = origin_y_r + 3'd1;
+                if (origin_y_r < 3'd6) origin_y = origin_y_r + 3'd1;
                 state_next = S_O_OP_READY;
             end
             S_SCALE_D: begin
@@ -330,41 +329,42 @@ module core #(
                 state_next = S_O_OP_READY;
             end
             S_DISPLAY: begin
-                sram_cen = 1'b0;
-                if (disp_yx == 2'd0) begin
-                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+0, origin_y+0, disp_c);
-                end else if (disp_yx == 2'd1) begin
-                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+1, origin_y+0, disp_c);
-                end else if (disp_yx == 2'd2) begin
-                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+0, origin_y+1, disp_c);
+                //{sram_select, sram_addr} = xyc2mem_addr(origin_x_r + disp_yx_r[0], origin_y_r + disp_yx_r[1], disp_c_r);
+                if (disp_yx_r == 2'd0) begin
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x_r + 3'd0, origin_y_r + 3'd0, disp_c_r);
+                end else if (disp_yx_r == 2'd1) begin
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x_r + 3'd1, origin_y_r + 3'd0, disp_c_r);
+                end else if (disp_yx_r == 2'd2) begin
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x_r + 3'd0, origin_y_r + 3'd1, disp_c_r);
                 end else begin
-                    {sram_select, sram_addr} = xyc2mem_addr(origin_x+1, origin_y+1, disp_c);
+                    {sram_select, sram_addr} = xyc2mem_addr(origin_x_r + 3'd1, origin_y_r + 3'd1, disp_c_r);
                 end
-                sram_wen[sram_select] = 1'b1; // read
+                //sram_wen[sram_select] = 1'b1; // read
                 sram_a[sram_select]   = sram_addr;
 
                 case (disp_fsm_r)
                     1'd0: begin
                         sram_out_valid = 1'b1;
                         disp_yx = disp_yx_r + 2'd1;
-                        if (disp_yx == 2'd3) begin
-                            if (disp_c_r < depth_value(depth_sel)) begin
+                        if (disp_yx_r == 2'd3) begin
+                            if (disp_c_r < depth_value(depth_sel_r)) begin
                                 disp_c = disp_c_r + 5'd1;
                             end else begin
-                                disp_fsm = 2'd1;
+                                disp_fsm = 1'd1;
                                 disp_c = 5'd0;
                             end
                         end
                     end
                     1'd1: begin
                         sram_out_valid = 1'b0;
-                        disp_fsm = 2'd0;
-                        state_next = S_O_OP_READY;
+                        if (!sram_out_valid_r) begin
+                            disp_fsm = 2'd0;
+                            state_next = S_O_OP_READY;
+                        end
                     end
                 endcase
             end
             S_CONV: begin
-                sram_cen = 1'b0;
                 case (conv_fsm)
                     2'd0: begin
                         conv_kernel_done = 1'b0;
