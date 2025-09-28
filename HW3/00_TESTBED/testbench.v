@@ -119,7 +119,8 @@ always @(negedge clk)begin
             if(opmode_mem[opmode_mem_cnt] === 4'bxxxx) begin
                 for(int k = 0; k < 4096; k = k + 1) begin
                     if(out_data_save[k] !== golden_mem[k])begin
-                        $display("No.%d: %b",k,out_data_save[k]);
+                        $display("No.%d: Your out_data %b",k,out_data_save[k]);
+                        $display("                Golden        %b",golden_mem[k]);
                         err_cnt = err_cnt + 1;
                     end
                 end
