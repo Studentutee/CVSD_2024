@@ -60,11 +60,7 @@ module core #(
         S_DISPLAY   = 5'd11,
         S_CONV      = 5'd12,
         S_MED       = 5'd13,
-
-        S_SOBEL_ACC = 5'd20,
-        S_SOBEL_NMS = 5'd21,
-        S_STREAM    = 5'd22,
-        S_PULSE_RDY = 5'd23
+        S_SOBEL_MNS = 5'd14
     } state_t;
 
     state_t state;
@@ -214,6 +210,7 @@ module core #(
     reg [1:0]   med_y_3x3_cnt_r;
     reg [1:0]   med_y_3x3_cnt_r_delay1; 
     //reg [1:0]   conv_y_4x4_cnt_r_delay1;
+    reg [1:0]   med_out_valid;
 
 
     // Next-state (combinational) for simple stream datapath
@@ -221,6 +218,8 @@ module core #(
             state_next = state;
             o_op_ready = 1'b0;
             o_in_ready = 1'b0;
+            // o_out_data = 14'd0;
+            // o_out_valid = 1'b0;
             sram_cen = 1'b0; // default disable
             sram_wen = 4'b1111; // default read
             sram_select = sram_select_r;
@@ -260,6 +259,7 @@ module core #(
             med_scan_point_y = med_scan_point_y_r;
             med_x_3x3_cnt = med_x_3x3_cnt_r;
             med_y_3x3_cnt = med_y_3x3_cnt_r;
+            med_out_valid = 1'b0;
             
 
             for (int i = 0; i < SRAM_COUNT; i = i + 1) begin
@@ -607,19 +607,19 @@ module core #(
                         if(med_compare_idx2_r == 4'd8) begin //this pass done
                             if(med_compare_idx1_r == 4'd7) begin
                                 med_fsm = 3'd4; //output median
-                                o_out_valid = 1'b1;
-                                o_out_data = {6'sb0,med_list_r[4]};//median is the 4th element after sorting
+                                med_out_valid = 1'b1;
+                                
                             end else begin
                                 med_compare_idx1 = med_compare_idx1_r + 4'd1;
                                 med_compare_idx2 = med_compare_idx1_r + 4'd2; //注意是idx1_r + 4'd2;
                             end
                         end
                     end
-                    3'd4:begin //output median
+                    default:begin //output median
                         for(int i = 0; i < 9; i = i + 1)begin
                             med_list[i] = 'b0;
                         end
-                        o_out_valid = 1'b0;
+                        med_out_valid = 1'b0;
                         med_yx = med_yx_r + 2'd1;
                         med_fsm = 3'd1;
                         if(med_yx_r == 2'd3) begin //this place all done
@@ -784,62 +784,16 @@ module core #(
                     med_y_3x3_cnt_r_delay1 <= med_y_3x3_cnt_r;                
 
                     sram_out_valid_r <= sram_out_valid;                 
-
-                    o_out_data <= o_out_data; // hold previous output
-                    o_out_valid <= o_out_valid;
+                    o_out_data <= {6'sb0,med_list_r[4]};//median is the 4th element after sorting
+                    o_out_valid <= med_out_valid;
         
                 end
 
 
                 // ================= SOBEL + NMS (first 4 channels) =================
-                S_SOBEL_ACC: begin
-                    /*
-                    // Compute sram_center gradient & direction
-                    integer bx, by; bx = origin_x + (sob_xy[0] ? 1 : 0); by = origin_y + (sob_xy[1] ? 1 : 0);
-                    sobel_vec(bx, by, sob_ch, gx_c, gy_c, g_c);
-                    g_dir <= sobel_dir(gx_c, gy_c);
-                    state <= S_SOBEL_NMS;
-                    */
-                end
-
-                S_SOBEL_NMS: begin
-                    /*
-                    integer bx, by; integer nx1, ny1, nx2, ny2;
-                    bx = origin_x + (sob_xy[0] ? 1 : 0);
-                    by = origin_y + (sob_xy[1] ? 1 : 0);
-                    // Neighbor coords along quantized dir
-                    unique case (g_dir)
-                        DIR_0:   begin nx1=bx-1; ny1=by;   nx2=bx+1; ny2=by;   end
-                        DIR_90:  begin nx1=bx;   ny1=by-1; nx2=bx;   ny2=by+1; end
-                        DIR_45:  begin nx1=bx-1; ny1=by-1; nx2=bx+1; ny2=by+1; end
-                        default: begin nx1=bx-1; ny1=by+1; nx2=bx+1; ny2=by-1; end
-                    endcase
-                    g_n1 = sobel_mag(nx1, ny1, sob_ch);
-                    g_n2 = sobel_mag(nx2, ny2, sob_ch);
-
-                    // Suppress if sram_center < any neighbor
-                    if (g_c < g_n1 || g_c < g_n2) begin
-                        o_out_data  <= 14'sd0;
-                    end else begin
-                        o_out_data  <= g_c[13:0];
-                    end
-                    o_out_valid <= 1'b1;
-
-                    // Advance ordering: spatial 2×2 then channel 0..3
-                    if (sob_xy == 2'd3) begin
-                        sob_xy <= 2'd0;
-                        if (sob_ch == 2'd3) begin
-                            o_op_ready <= 1'b1; state <= S_WAIT_OP;
-                        end else begin
-                            sob_ch <= sob_ch + 2'd1; state <= S_SOBEL_ACC;
-                        end
-                    end else begin
-                        sob_xy <= sob_xy + 2'd1; state <= S_SOBEL_ACC;
-                    end*/
-                end
-
-                default: begin
+                S_SOBEL_ACC:begin
                     //state <= S_WAIT_OP;
+                    
                 end
             endcase
         end
