@@ -59,9 +59,8 @@ module core #(
         S_SCALE_U   = 5'd10,
         S_DISPLAY   = 5'd11,
         S_CONV      = 5'd12,
-    
-        S_MED_PREP  = 5'd18,
-        S_MED_SORT  = 5'd19,
+        S_MED       = 5'd13,
+
         S_SOBEL_ACC = 5'd20,
         S_SOBEL_NMS = 5'd21,
         S_STREAM    = 5'd22,
@@ -188,8 +187,34 @@ module core #(
     reg [4:0]   conv_c_4x4_cnt;       // channel index for accumulation
     reg [4:0]   conv_c_4x4_cnt_r;
 
-    //integer i;
-    //integer j;
+    // --------------------------------------------------
+    // Median reg
+    // -------------------------------------------------
+    reg [2:0]   med_fsm;
+    reg [2:0]   med_fsm_r;
+    reg [7:0]   med_list [8:0];
+    reg [7:0]   med_list_r [8:0];
+    reg [3:0]   med_compare_idx1;
+    reg [3:0]   med_compare_idx1_r;
+    reg [3:0]   med_compare_idx2;
+    reg [3:0]   med_compare_idx2_r;
+    reg [1:0]   med_yx;
+    reg [1:0]   med_yx_r;
+    reg [1:0]   med_c;
+    reg [1:0]   med_c_r;
+    reg [3:0]   med_scan_point_x;
+    reg [3:0]   med_scan_point_x_r;
+    reg [3:0]   med_scan_point_y;
+    reg [3:0]   med_scan_point_y_r;
+    reg [1:0]   med_x_3x3_cnt;
+    reg [1:0]   med_x_3x3_cnt_r;
+    reg [1:0]   med_x_3x3_cnt_r_delay1;
+    //reg [1:0]   conv_x_4x4_cnt_r_delay1;
+    reg [1:0]   med_y_3x3_cnt;
+    reg [1:0]   med_y_3x3_cnt_r;
+    reg [1:0]   med_y_3x3_cnt_r_delay1; 
+    //reg [1:0]   conv_y_4x4_cnt_r_delay1;
+
 
     // Next-state (combinational) for simple stream datapath
     always @(*) begin
@@ -224,6 +249,18 @@ module core #(
             conv_c_4x4_cnt = conv_c_4x4_cnt_r;
             conv_acc_4x4 = conv_acc_4x4_r;
             conv_kernel_done = 1'b0;
+
+            med_fsm    = med_fsm_r;
+            med_list   = med_list_r;
+            med_compare_idx1 = med_compare_idx1_r;
+            med_compare_idx2 = med_compare_idx2_r;
+            med_yx     = med_yx_r;
+            med_c      = med_c_r;
+            med_scan_point_x = med_scan_point_x_r;
+            med_scan_point_y = med_scan_point_y_r;
+            med_x_3x3_cnt = med_x_3x3_cnt_r;
+            med_y_3x3_cnt = med_y_3x3_cnt_r;
+            
 
             for (int i = 0; i < SRAM_COUNT; i = i + 1) begin
                 sram_a[i] = 9'd0;   // 嘗試清零
@@ -276,7 +313,7 @@ module core #(
                         end
                         OP_MEDIAN: begin
                             //med_ch <= 2'd0; med_xy <= 2'd0;
-                            state_next = S_MED_PREP;
+                            state_next = S_MED;
                         end
                         OP_SOBEL: begin
                             //sob_ch <= 2'd0; sob_xy <= 2'd0;
@@ -487,6 +524,118 @@ module core #(
                     end
                 endcase
             end
+            S_MED: begin
+                case(med_fsm_r)
+                    3'd0:begin
+                        //reset//
+                        med_compare_idx1 = 4'd1;
+                        med_compare_idx2 = 4'd2;
+                        med_scan_point_x = origin_x - 4'd1; //if origin_x=000(unsigned), med_scan_point_x <= 0000 - 0001 = 1111(unsigned)
+                        med_scan_point_y = origin_y - 4'd1;
+                        med_x_3x3_cnt = 2'd0;
+                        med_y_3x3_cnt = 2'd0;
+                        med_yx = 2'd0;           
+                        med_c = 2'd0;     
+                        for(int i = 0; i < 9; i = i + 1)begin
+                            med_list[i] = 'b0;
+                        end
+                        med_fsm = 3'd1;
+                    end
+                    3'd1:begin //fisrt read
+                        if(med_scan_point_x_r + med_yx_r[0] > 3'd7 || med_scan_point_y_r + med_yx_r[1] > 3'd7)begin  //zero padding
+                            med_list[med_y_3x3_cnt_r*3 + med_x_3x3_cnt_r] = 8'd0; 
+                        end else begin //not zero padding
+                            sram_out_valid = 1'b1;
+                            {sram_select, sram_addr} = xyc2mem_addr((med_scan_point_x_r[2:0] + med_yx_r[0]), (med_scan_point_y_r[2:0] + med_yx_r[1]), {3'd0, med_c_r});//med_c_r只有2bits，前面補3個0  
+                        end 
+                        med_x_3x3_cnt = med_x_3x3_cnt_r + 2'd1;
+                        med_scan_point_x = med_scan_point_x_r + 4'd1;
+                        med_fsm = 3'd2;
+                    end
+                    3'd2:begin //讀取的時候同時進行第一次排序，將最大值放到第0位
+                        if(sram_out_valid_r) begin
+                            if(sram_q[med_c_r] > med_list[0]) begin
+                                med_list[med_y_3x3_cnt_r_delay1*3 + med_x_3x3_cnt_r_delay1] = med_list_r[0];
+                                med_list[0] = sram_q[med_c_r]; //放後面，避免y, x=0時被覆蓋
+                            end else begin
+                                med_list[med_y_3x3_cnt_r_delay1*3 + med_x_3x3_cnt_r_delay1] = sram_q[med_c_r];
+                            end
+                            sram_out_valid = 1'b0;
+                        end
+                        if(med_scan_point_x_r + med_yx_r[0] > 3'd7 || med_scan_point_y_r + med_yx_r[1] > 3'd7)begin  //zero padding
+                            med_list[med_y_3x3_cnt_r*3 + med_x_3x3_cnt_r] = 8'd0; 
+
+                        end else begin //not zero padding
+                            sram_out_valid = 1'b1;
+                            {sram_select, sram_addr} = xyc2mem_addr((med_scan_point_x_r[2:0] + med_yx_r[0]), (med_scan_point_y_r[2:0] + med_yx_r[1]), {3'd0, med_c_r});//med_c_r只有2bits，前面補3個0
+                        end 
+                        //掃描點++//////////////////////////////////////////
+                        med_x_3x3_cnt = med_x_3x3_cnt_r + 2'd1;
+                        med_scan_point_x = med_scan_point_x_r + 4'd1;
+                        if(med_x_3x3_cnt_r == 2'd2)begin //x這一輪是2，下一輪是0
+                            med_x_3x3_cnt = 2'd0;
+                            med_scan_point_x = med_scan_point_x_r - 4'd2;
+                            med_y_3x3_cnt = med_y_3x3_cnt_r + 2'd1;
+                            med_scan_point_y = med_scan_point_y_r + 4'd1;
+                            if(med_y_3x3_cnt_r == 2'd2) begin //this kernal done
+                                med_y_3x3_cnt = 2'd0;
+                                med_scan_point_y = med_scan_point_y_r - 4'd2;
+                                med_compare_idx1 = 4'd1;
+                                med_compare_idx2 = 4'd2;
+                                med_fsm = 3'd3; //sort
+                            end
+                        end
+                        //掃描點++//////////////////////////////////////////         
+                    end
+                    3'd3:begin //sort
+                        if(sram_out_valid_r) begin//保存上一輪的最後一筆資料，但只與第0筆與作後一筆有關，所以也不會影響這一輪的排序
+                            if(sram_q[med_c_r] > med_list[0]) begin
+                                med_list[0] = sram_q[med_c_r];
+                                med_list[8] = med_list_r[0];
+                            end else begin
+                                med_list[8] = sram_q[med_c_r];
+                            end
+                            sram_out_valid = 1'b0;
+                        end
+
+                        //compare & swap
+                        if(med_list_r[med_compare_idx1_r] < med_list_r[med_compare_idx2_r]) begin
+                            med_list[med_compare_idx1_r] = med_list_r[med_compare_idx2_r];
+                            med_list[med_compare_idx2_r] = med_list_r[med_compare_idx1_r];
+                        end
+                        med_compare_idx2 = med_compare_idx2_r + 4'd1;//++
+                        if(med_compare_idx2_r == 4'd8) begin //this pass done
+                            if(med_compare_idx1_r == 4'd7) begin
+                                med_fsm = 3'd4; //output median
+                                o_out_valid = 1'b1;
+                                o_out_data = {6'sb0,med_list_r[4]};//median is the 4th element after sorting
+                            end else begin
+                                med_compare_idx1 = med_compare_idx1_r + 4'd1;
+                                med_compare_idx2 = med_compare_idx1_r + 4'd2; //注意是idx1_r + 4'd2;
+                            end
+                        end
+                    end
+                    3'd4:begin //output median
+                        for(int i = 0; i < 9; i = i + 1)begin
+                            med_list[i] = 'b0;
+                        end
+                        o_out_valid = 1'b0;
+                        med_yx = med_yx_r + 2'd1;
+                        med_fsm = 3'd1;
+                        if(med_yx_r == 2'd3) begin //this place all done
+                            med_c = med_c_r + 2'd1;
+                            if(med_c_r == 2'd3) begin
+                                med_fsm = 3'd0;
+                                state_next = S_O_OP_READY; //all done
+                            end 
+                        end
+                    end
+                endcase
+                sram_a[0]   = sram_addr;
+                sram_a[1]   = sram_addr;
+                sram_a[2]   = sram_addr;
+                sram_a[3]   = sram_addr; 
+            end
             default: begin
 
             end
@@ -525,7 +674,9 @@ module core #(
             // conv_y_4x4_cnt <= 3'd0;
             // conv_c_4x4_cnt <= 5'd0;
             
-            
+            med_fsm_r      <= 2'd0;
+
+
             // med_xy      <= 2'd0;
             // med_ch      <= 2'd0;
             // sob_xy      <= 2'd0;
@@ -616,42 +767,29 @@ module core #(
                 end
 
                 // ================= MEDIAN FILTER (first 4 channels) =================
-                S_MED_PREP: begin
-                    /*
-                    // Load 3×3 window into med_win[] for (med_ch, med_xy)
-                    integer bx, by, dx, dy, idx;
-                    bx = origin_x + (med_xy[0] ? 1 : 0);
-                    by = origin_y + (med_xy[1] ? 1 : 0);
-                    idx = 0;
-                    for (dy=-1; dy<=1; dy=dy+1) begin
-                        for (dx=-1; dx<=1; dx=dx+1) begin
-                            med_win[idx] <= rd_px(bx+dx, by+dy, med_ch);
-                            idx = idx + 1;
-                        end
-                    end
-                    state <= S_MED_SORT;
-                    */
+                S_MED: begin
+                    med_fsm_r <= med_fsm;
+
+                    med_list_r <= med_list;
+                    med_compare_idx1_r <= med_compare_idx1;
+                    med_compare_idx2_r <= med_compare_idx2;
+                    med_yx_r <= med_yx;
+                    med_c_r <= med_c;
+                    med_scan_point_x_r <= med_scan_point_x;
+                    med_scan_point_y_r <= med_scan_point_y;
+
+                    med_x_3x3_cnt_r <= med_x_3x3_cnt;
+                    med_x_3x3_cnt_r_delay1 <= med_x_3x3_cnt_r;
+                    med_y_3x3_cnt_r <= med_y_3x3_cnt; 
+                    med_y_3x3_cnt_r_delay1 <= med_y_3x3_cnt_r;                
+
+                    sram_out_valid_r <= sram_out_valid;                 
+
+                    o_out_data <= o_out_data; // hold previous output
+                    o_out_valid <= o_out_valid;
+        
                 end
 
-                S_MED_SORT: begin
-                    /*
-                    median9_sort();
-                    // Output median (element 4)
-                    o_out_valid <= 1'b1;
-                    o_out_data  <= {6'd0, med_win[4]};
-                    // Advance to next spatial pos, then channel
-                    if (med_xy == 2'd3) begin
-                        med_xy <= 2'd0;
-                        if (med_ch == 2'd3) begin
-                            o_op_ready <= 1'b1; state <= S_WAIT_OP;
-                        end else begin
-                            med_ch <= med_ch + 2'd1; state <= S_MED_PREP;
-                        end
-                    end else begin
-                        med_xy <= med_xy + 2'd1; state <= S_MED_PREP;
-                    end
-                    */
-                end
 
                 // ================= SOBEL + NMS (first 4 channels) =================
                 S_SOBEL_ACC: begin
