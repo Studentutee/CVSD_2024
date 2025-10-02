@@ -67,11 +67,31 @@ module core #(
     state_t state_next;
 
     // 宣告一個 3×3 的常數矩陣
-    localparam [2:0] GAUSS_KERNEL [2:0][2:0] = '{
-        '{3'd0, 3'd1, 3'd0},  // row 0: (ky=0)
-        '{3'd1, 3'd2, 3'd1},  // row 1: (ky=1)
-        '{3'd0, 3'd1, 3'd0}   // row 2: (ky=2)
+    localparam [1:0] GAUSS_KERNEL [2:0][2:0] = '{
+        '{2'd0, 2'd1, 2'd0},  // row 0: (ky=0)
+        '{2'd1, 2'd2, 2'd1},  // row 1: (ky=1)
+        '{2'd0, 2'd1, 2'd0}   // row 2: (ky=2)
     };
+    
+    localparam signed [2:0] SOBEL_KERNEL_X [2:0][2:0] = '{
+        '{1, 0, -1},  // row 0: (ky=0)
+        '{2, 0, -2},  // row 1: (ky=1)
+        '{1, 0, -1}   // row 2: (ky=2)
+    }; //col: 2
+    localparam signed [2:0] SOBEL_KERNEL_Y [2:0][2:0] = '{
+        '{ 1,   2,   1},  // row 0: (ky=0)
+        '{ 0,   0,   0},  // row 1: (ky=1)
+        '{-1,  -2,  -1}   // row 2: (ky=2)
+    };
+    // function automatic [10:0] sobel_kernel_x(input [1:0] y, input [1:0] x, input [8:0] data);
+    //     case ({y,x})
+    //         0000, 1000:  sobel_kernel_x = -data;
+    //         0100: sobel_kernel_x = -(data << 1);
+    //         0010, 1010:  sobel_kernel_x = data;
+    //         0110: sobel_kernel_x = data << 1;
+    //         default:  sobel_kernel_x = 11'd0;
+    //     endcase
+    // endfunction
 
     // -----------------------------
     // Negege-sampled inputs (spec p.6)
@@ -212,6 +232,47 @@ module core #(
     //reg [1:0]   conv_y_4x4_cnt_r_delay1;
     reg [1:0]   med_out_valid;
 
+    // -----------------------------
+    // SOBEL+NMS reg
+    // -----------------------------
+    reg [2:0]   sobel_fsm;
+    reg [2:0]   sobel_fsm_r;
+    reg signed [10:0] sobel_gx [1:0][1:0][3:0];
+    reg signed [10:0] sobel_gx_r [1:0][1:0][3:0];
+    reg signed [10:0] sobel_gy [1:0][1:0][3:0];
+    reg signed [10:0] sobel_gy_r [1:0][1:0][3:0];
+    reg [10:0]   sobel_gx_abs;
+    reg [10:0]   sobel_gy_abs;
+    reg [16:0]  sobel_gx_abs_x_110101 [3:0];
+    reg [9:0]   sobel_gx_abs_x_110101_r [3:0]; //把小數點去掉了 [16:7]
+    reg [19:0]  sobel_gx_abs_x_100110101 [3:0]; //[19:7]，[6:0]是小數點
+    reg [12:0]  sobel_gx_abs_x_100110101_r [3:0];//把小數點去掉了[19:6]
+    reg [11:0]  sobel_g  [1:0][1:0];
+    reg [11:0]  sobel_g_r  [1:0][1:0];
+    reg [1:0]   sobel_g_channel_cnt;
+    reg [1:0]   sobel_g_channel_cnt_r;
+
+    reg [1:0]   sobel_yx;
+    reg [1:0]   sobel_yx_r;
+    reg [1:0]   sobel_yx_r_delay1;
+    reg [3:0]   sobel_scan_point_x;
+    reg [3:0]   sobel_scan_point_x_r;
+    reg [3:0]   sobel_scan_point_y;
+    reg [3:0]   sobel_scan_point_y_r;
+    reg [1:0]   sobel_x_3x3_cnt;
+    reg [1:0]   sobel_x_3x3_cnt_r;
+    reg [1:0]   sobel_x_3x3_cnt_r_delay1;
+    reg [1:0]   sobel_y_3x3_cnt;
+    reg [1:0]   sobel_y_3x3_cnt_r;
+    reg [1:0]   sobel_y_3x3_cnt_r_delay1;
+    reg [1:0]   sobel_out_valid;
+    reg [11:0]  sobel_out_data;
+    reg signed [2:0]  sobel_kernel_x;
+    reg signed [2:0]  sobel_kernel_y;
+
+    function automatic [10:0] abs11(input signed [10:0] x);
+        abs11 = (x < 0) ? -x : x;
+    endfunction
 
     // Next-state (combinational) for simple stream datapath
     always @(*) begin
@@ -261,6 +322,26 @@ module core #(
             med_y_3x3_cnt = med_y_3x3_cnt_r;
             med_out_valid = 1'b0;
             
+            sobel_fsm    = sobel_fsm_r;
+            sobel_gx     = sobel_gx_r;
+            sobel_gy     = sobel_gy_r;
+            for(int i=0; i<4; i=i+1) begin
+                sobel_gx_abs_x_110101[i] = 'sb0;
+                sobel_gx_abs_x_100110101[i] = 'sb0;
+                sobel_gx_abs_x_110101[i][16:7] = sobel_gx_abs_x_110101_r[i];
+                sobel_gx_abs_x_100110101[i][19:7] = sobel_gx_abs_x_100110101_r[i];
+            end
+            sobel_g      = sobel_g_r;
+            sobel_g_channel_cnt = sobel_g_channel_cnt_r;
+            sobel_yx     = sobel_yx_r;
+            sobel_scan_point_x = sobel_scan_point_x_r;
+            sobel_scan_point_y = sobel_scan_point_y_r;
+            sobel_x_3x3_cnt = sobel_x_3x3_cnt_r;
+            sobel_y_3x3_cnt = sobel_y_3x3_cnt_r;
+            sobel_out_valid = 1'b0;
+            sobel_out_data = 11'd0;
+            sobel_kernel_x = 3'd0;
+            sobel_kernel_y = 3'd0;
 
             for (int i = 0; i < SRAM_COUNT; i = i + 1) begin
                 sram_a[i] = 9'd0;   // 嘗試清零
@@ -317,7 +398,7 @@ module core #(
                         end
                         OP_SOBEL: begin
                             //sob_ch <= 2'd0; sob_xy <= 2'd0;
-                            state_next = S_SOBEL_ACC; // compute sram_center first
+                            state_next = S_SOBEL_MNS; // compute sram_center first
                         end
                         default: begin
                             // ignore undefined opcodes
@@ -485,12 +566,12 @@ module core #(
                         end  
                         ///////////之前寫成讀取conv_x_4x4_cnt_r_delay1、conv_x_4x4_cnt_r_delay1
                         if(sram_out_valid_r) begin //save to acc, and conv_x_4x4 ++
-                            conv_acc_4x4[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] = conv_acc_4x4_r[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] + (sram_q[0] + sram_q[1] + sram_q[2] + sram_q[3]);
+                            conv_acc_4x4[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] = conv_acc_4x4_r[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] + ((sram_q[0] + sram_q[1]) + (sram_q[2] + sram_q[3]));
                         end   
                     end
                     2'd2: begin
                         if(sram_out_valid_r) begin //the last memory output save to acc
-                            conv_acc_4x4[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] = conv_acc_4x4_r[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] + (sram_q[0] + sram_q[1] + sram_q[2] + sram_q[3]);
+                            conv_acc_4x4[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] = conv_acc_4x4_r[conv_y_4x4_cnt_r_delay1][conv_x_4x4_cnt_r_delay1] + ((sram_q[0] + sram_q[1]) + (sram_q[2] + sram_q[3]));
                             sram_out_valid = 1'b0;
                         end
 
@@ -607,8 +688,7 @@ module core #(
                         if(med_compare_idx2_r == 4'd8) begin //this pass done
                             if(med_compare_idx1_r == 4'd7) begin
                                 med_fsm = 3'd4; //output median
-                                med_out_valid = 1'b1;
-                                
+                                med_out_valid = 1'b1;                                
                             end else begin
                                 med_compare_idx1 = med_compare_idx1_r + 4'd1;
                                 med_compare_idx2 = med_compare_idx1_r + 4'd2; //注意是idx1_r + 4'd2;
@@ -637,7 +717,139 @@ module core #(
                 sram_a[3]   = sram_addr; 
             end
             default: begin
+                case(sobel_fsm_r)
+                    3'd0: begin
+                        //reset//
+                        sobel_yx = 2'd0;                
+                        sobel_scan_point_x = origin_x - 4'd1;
+                        sobel_scan_point_y = origin_y - 4'd1; 
+                        sobel_x_3x3_cnt = 2'd0;
+                        sobel_y_3x3_cnt = 2'd0;
+                        sobel_g_channel_cnt = 2'd0;
 
+                        for(int i = 0; i < 2; i = i + 1)begin
+                            for(int j = 0; j < 2; j = j + 1)begin
+                                for(int k = 0; k < 4; k = k + 1)begin
+                                    sobel_gx[i][j][k] = 'sb0;
+                                    sobel_gy[i][j][k] = 'sb0;                                   
+                                end
+                                sobel_g[i][j] = 'b0;
+                            end
+                        end
+                        sobel_fsm = 3'd1;
+                    end
+                    3'd1: begin
+                        //read sram output
+                        if(sram_out_valid_r) begin
+                            for(int i = 0; i < 4; i = i + 1)begin
+                                sobel_kernel_x = SOBEL_KERNEL_X[sobel_y_3x3_cnt_r_delay1][sobel_x_3x3_cnt_r_delay1]; //debug用
+                                sobel_kernel_y = SOBEL_KERNEL_Y[sobel_y_3x3_cnt_r_delay1][sobel_x_3x3_cnt_r_delay1];
+                                sobel_gx[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] = sobel_gx_r[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] + sobel_kernel_x * $signed({1'b0, sram_q[i]});
+                                sobel_gy[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] = sobel_gy_r[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] + sobel_kernel_y * $signed({1'b0, sram_q[i]});
+                            end
+                            sram_out_valid = 1'b0;
+                        end
+                        //check zero padding or not, and set memory address
+                        if(sobel_scan_point_x_r + sobel_yx_r[0] > 3'd7 || sobel_scan_point_y_r + sobel_yx_r[1] > 3'd7)begin  //zero padding
+                            // for(int i = 0; i < 4; i = i + 1)begin
+                            //     sobel_gx[sobel_yx_r[1]][sobel_yx_r[0]][i] = 11'sd0; 
+                            //     sobel_gy[sobel_yx_r[1]][sobel_yx_r[0]][i] = 11'sd0; 
+                            // end                        
+                        end else begin //not zero padding
+                            sram_out_valid = 1'b1;
+                            {sram_select, sram_addr} = xyc2mem_addr((sobel_scan_point_x_r[2:0] + sobel_yx_r[0]), (sobel_scan_point_y_r[2:0] + sobel_yx_r[1]), 5'd0);
+                        end 
+                        
+                        //掃描點++//////////////////////////////////////////
+                        sobel_x_3x3_cnt = sobel_x_3x3_cnt_r + 2'd1;
+                        sobel_scan_point_x = sobel_scan_point_x_r + 4'd1;
+                        if(sobel_x_3x3_cnt_r == 2'd2)begin //x這一輪是1，下一輪是0
+                            sobel_x_3x3_cnt = 2'd0;
+                            sobel_scan_point_x = sobel_scan_point_x_r - 4'd2;
+                            sobel_y_3x3_cnt = sobel_y_3x3_cnt_r + 2'd1;
+                            sobel_scan_point_y = sobel_scan_point_y_r + 4'd1;
+                            if(sobel_y_3x3_cnt_r == 2'd2) begin //this kernal done
+                                sobel_y_3x3_cnt = 2'd0;
+                                sobel_scan_point_y = sobel_scan_point_y_r - 4'd2;
+                                sobel_yx = sobel_yx_r + 2'd1;
+                                if(sobel_yx_r == 2'd3) begin //all done
+                                    sobel_fsm = 3'd2; //compute G
+                                end
+                            end
+                        end
+                        //掃描點++//////////////////////////////////////////
+                    end
+                    3'd2: begin //compute G & gradient
+                        //read the last memory output
+                        if(sram_out_valid_r) begin
+                            for(int i = 0; i < 4; i = i + 1)begin
+                                sobel_kernel_x = SOBEL_KERNEL_X[sobel_y_3x3_cnt_r_delay1][sobel_x_3x3_cnt_r_delay1]; //debug用
+                                sobel_kernel_y = SOBEL_KERNEL_Y[sobel_y_3x3_cnt_r_delay1][sobel_x_3x3_cnt_r_delay1];
+                                sobel_gx[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] = sobel_gx[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] + sobel_kernel_x * $signed({1'b0, sram_q[i]});
+                                sobel_gy[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] = sobel_gy[sobel_yx_r_delay1[1]][sobel_yx_r_delay1[0]][i] + sobel_kernel_y * $signed({1'b0, sram_q[i]});
+                            end
+                            sram_out_valid = 1'b0;
+                        end
+                        
+                        sobel_gx_abs = abs11(sobel_gx_r[sobel_yx_r[1]][sobel_yx_r[0]][sobel_g_channel_cnt_r]);
+                        sobel_gy_abs = abs11(sobel_gy_r[sobel_yx_r[1]][sobel_yx_r[0]][sobel_g_channel_cnt_r]);
+                        sobel_g[sobel_yx_r[1]][sobel_yx_r[0]] = (sobel_gx_abs + sobel_gy_abs);
+
+                        sobel_gx_abs_x_110101[sobel_yx_r] = sobel_gx_abs * 6'b110101;
+                        sobel_gx_abs_x_100110101[sobel_yx_r] = sobel_gx_abs * 9'b100110101;
+                        sobel_yx = sobel_yx_r + 2'b1;
+                        //sobel_g_channel_cnt = sobel_g_channel_cnt_r + 2'd1; 後面再加
+                        if(sobel_yx_r == 2'd3) begin
+                            sobel_fsm = 3'd3; //output G
+                        end
+                    end
+                    3'd3: begin
+                        if(abs11(sobel_gy_r[sobel_yx_r[1]][sobel_yx_r[0]][sobel_g_channel_cnt_r]) <= {1'b0, sobel_gx_abs_x_110101_r[sobel_yx_r]}) begin //小數部分已被去掉，所以變成小於等於                           
+                            if (sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]] < sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0] + 1'b1]) begin //if G(x,y) less than any of its two neighbors
+                                sobel_out_data = 14'sd0;
+                            end else begin
+                                sobel_out_data = {2'b00, sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]]};//keep G value
+                            end
+                        end else if({2'b00, abs11(sobel_gy_r[sobel_yx_r[1]][sobel_yx_r[0]][sobel_g_channel_cnt_r])} > sobel_gx_abs_x_100110101_r[sobel_yx_r]) begin //67.5~112.5                      
+                            if (sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]] < sobel_g_r[sobel_yx_r[1] + 1'b1][sobel_yx_r[0]]) begin //if G(x,y) less than any of its two neighbors
+                                sobel_out_data = 14'sd0;
+                            end else begin
+                                sobel_out_data = {2'b00, sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]]};//keep G value
+                            end
+                        end else begin //45 or 135
+                            // if (sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]] < sobel_g_r[sobel_yx_r[1] + 1'b1][sobel_yx_r[0]]) begin //if G(x,y) less than any of its two neighbors
+                            //     sobel_out_data = 14'sd0;
+                            // end else begin
+                            //     sobel_out_data = {2'b00, sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]]};//keep G value
+                            // end
+                            if (sobel_gx_r[sobel_yx_r[1]][sobel_yx_r[0]][sobel_g_channel_cnt_r][10] == sobel_gy_r[sobel_yx_r[1]][sobel_yx_r[0]][sobel_g_channel_cnt_r][10]) begin //45
+                                sobel_out_data = (sobel_yx_r[1] != sobel_yx_r[0]) ? {2'b00, sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]]} : //右上、左下，45度角線上都是0
+                                                (sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]] < sobel_g_r[sobel_yx_r[1] + 1'b1][sobel_yx_r[0] + 1'b1]) ? 12'b0 : {2'b00, sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]]};
+                            end else begin //67.5~112.5
+                                sobel_out_data = (sobel_yx_r[1] == sobel_yx_r[0]) ? {2'b00, sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]]} : //左上、右下，135度角線上都是0
+                                                (sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]] < sobel_g_r[sobel_yx_r[1] + 1'b1][sobel_yx_r[0] + 1'b1]) ? 12'b0 : {2'b00, sobel_g_r[sobel_yx_r[1]][sobel_yx_r[0]]};
+                            end
+                        end
+                        sobel_yx = sobel_yx_r + 2'b1;
+                        if (sobel_yx_r == 2'd3)begin
+                            sobel_fsm = 3'd2; //compute G
+                            sobel_g_channel_cnt = sobel_g_channel_cnt_r + 2'b1;
+                            if (sobel_g_channel_cnt_r == 2'd3) begin
+                                sobel_fsm = 3'd4; //all done
+                            end
+                        end
+                        sobel_out_valid = 1'b1;
+                    end
+                    default: begin
+                        sobel_out_valid = 1'b0;
+                        sobel_fsm = 3'd0;
+                        state_next = S_O_OP_READY; //all done
+                    end
+                endcase
+                sram_a[0]   = sram_addr;
+                sram_a[1]   = sram_addr;
+                sram_a[2]   = sram_addr;
+                sram_a[3]   = sram_addr;
             end
         endcase
     end
@@ -674,13 +886,9 @@ module core #(
             // conv_y_4x4_cnt <= 3'd0;
             // conv_c_4x4_cnt <= 5'd0;
             
-            med_fsm_r      <= 2'd0;
+            med_fsm_r      <= 3'd0;
 
-
-            // med_xy      <= 2'd0;
-            // med_ch      <= 2'd0;
-            // sob_xy      <= 2'd0;
-            // sob_ch      <= 2'd0;
+            sobel_fsm_r   <= 3'd0;
         end else begin
             state <= state_next;
             i_op_valid_r <= i_op_valid;
@@ -791,9 +999,29 @@ module core #(
 
 
                 // ================= SOBEL + NMS (first 4 channels) =================
-                S_SOBEL_ACC:begin
+                default:begin
                     //state <= S_WAIT_OP;
+                    sobel_fsm_r <= sobel_fsm;
+                    sobel_yx_r <= sobel_yx;
+                    sobel_yx_r_delay1 <= sobel_yx_r;
                     
+                    sobel_scan_point_x_r <= sobel_scan_point_x;
+                    sobel_scan_point_y_r <= sobel_scan_point_y;
+                    sobel_x_3x3_cnt_r <= sobel_x_3x3_cnt;
+                    sobel_x_3x3_cnt_r_delay1 <= sobel_x_3x3_cnt_r;
+                    sobel_y_3x3_cnt_r <= sobel_y_3x3_cnt;
+                    sobel_y_3x3_cnt_r_delay1 <= sobel_y_3x3_cnt_r;
+                    sobel_g_channel_cnt_r <= sobel_g_channel_cnt;
+                    sram_out_valid_r <= sram_out_valid;
+                    sobel_gx_r <= sobel_gx;
+                    sobel_gy_r <= sobel_gy;
+                    sobel_g_r <= sobel_g;
+                    for (int i = 0; i < 4; i++) begin
+                        sobel_gx_abs_x_110101_r[i] <= sobel_gx_abs_x_110101[i][16:7];
+                        sobel_gx_abs_x_100110101_r[i] <= sobel_gx_abs_x_100110101[i][19:7];
+                    end
+                    o_out_data <= {2'b0,sobel_out_data};
+                    o_out_valid <= sobel_out_valid;
                 end
             endcase
         end
