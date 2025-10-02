@@ -326,8 +326,8 @@ module core #(
             sobel_gx     = sobel_gx_r;
             sobel_gy     = sobel_gy_r;
             for(int i=0; i<4; i=i+1) begin
-                sobel_gx_abs_x_110101[i] = 'sb0;
-                sobel_gx_abs_x_100110101[i] = 'sb0;
+                sobel_gx_abs_x_110101[i][6:0] = 'sb0;
+                sobel_gx_abs_x_100110101[i][6:0] = 'sb0;
                 sobel_gx_abs_x_110101[i][16:7] = sobel_gx_abs_x_110101_r[i];
                 sobel_gx_abs_x_100110101[i][19:7] = sobel_gx_abs_x_100110101_r[i];
             end
@@ -347,6 +347,7 @@ module core #(
                 sram_a[i] = 9'd0;   // 嘗試清零
                 sram_d[i] = 8'd0; // 嘗試清零
             end
+            
         case (state)
             S_RESET: begin
                 state_next = S_START;
@@ -726,7 +727,6 @@ module core #(
                         sobel_x_3x3_cnt = 2'd0;
                         sobel_y_3x3_cnt = 2'd0;
                         sobel_g_channel_cnt = 2'd0;
-
                         for(int i = 0; i < 2; i = i + 1)begin
                             for(int j = 0; j < 2; j = j + 1)begin
                                 for(int k = 0; k < 4; k = k + 1)begin
