@@ -1,0 +1,31 @@
+ 
+****************************************
+Report : area
+Design : core
+Version: V-2023.12-SP4
+Date   : Thu Oct  2 21:33:49 2025
+****************************************
+
+Library(s) Used:
+
+    slow (File: /home/peter/CVSD/Innovus_Lab/library/db/slow.db)
+    sram_512x8 (File: /home/peter/CVSD/HW3/sram_512x8/sram_512x8_slow_syn.db)
+
+Number of ports:                         1131
+Number of nets:                         10514
+Number of cells:                         9334
+Number of combinational cells:           8331
+Number of sequential cells:               936
+Number of macros/black boxes:               4
+Number of buf/inv:                       2125
+Number of references:                     265
+
+Combinational area:              94438.243191
+Buf/Inv area:                    13518.093527
+Noncombinational area:           26618.627142
+Macro/Black Box area:           123791.546875
+Net Interconnect area:         1073152.106689
+
+Total cell area:                244848.417207
+Total area:                    1318000.523897
+1

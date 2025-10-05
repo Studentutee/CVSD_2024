@@ -1,0 +1,66 @@
+Information: Updating design information... (UID-85)
+ 
+****************************************
+Report : timing
+        -path full
+        -delay max
+        -max_paths 1
+Design : core
+Version: V-2023.12-SP4
+Date   : Thu Oct  2 21:33:49 2025
+****************************************
+
+Operating Conditions: slow   Library: slow
+Wire Load Model Mode: top
+
+  Startpoint: GEN_SRAM[2].u_sram
+              (rising edge-triggered flip-flop clocked by i_clk)
+  Endpoint: sobel_gx_r_reg[0][0][2][5]
+            (rising edge-triggered flip-flop clocked by i_clk)
+  Path Group: i_clk
+  Path Type: max
+
+  Des/Clust/Port     Wire Load Model       Library
+  ------------------------------------------------
+  core               tsmc13_wl10           slow
+
+  Point                                                   Incr       Path
+  --------------------------------------------------------------------------
+  clock i_clk (rise edge)                                 0.00       0.00
+  clock network delay (ideal)                             0.50       0.50
+  GEN_SRAM[2].u_sram/CLK (sram_512x8)                     0.00       0.50 r
+  GEN_SRAM[2].u_sram/Q[0] (sram_512x8)                    2.18       2.68 f
+  r2418/b[0] (core_DW_mult_tc_20)                         0.00       2.68 f
+  r2418/U173/Y (INVX4)                                    0.15       2.83 r
+  r2418/U164/Y (NOR2X1)                                   0.12       2.94 f
+  r2418/product[0] (core_DW_mult_tc_20)                   0.00       2.94 f
+  U4101/Y (BUFX4)                                         0.21       3.16 f
+  add_788_I3/B[0] (core_DW01_add_71)                      0.00       3.16 f
+  add_788_I3/U132/Y (NAND2XL)                             0.43       3.59 r
+  add_788_I3/U141/Y (CLKINVX1)                            0.40       3.99 f
+  add_788_I3/U110/Y (AOI21X4)                             0.26       4.25 r
+  add_788_I3/U86/Y (OAI21X4)                              0.15       4.40 f
+  add_788_I3/U133/Y (AOI21X4)                             0.18       4.58 r
+  add_788_I3/U109/Y (INVX3)                               0.14       4.71 f
+  add_788_I3/U137/Y (AOI21X1)                             0.30       5.02 r
+  add_788_I3/U127/Y (XOR2X4)                              0.22       5.24 f
+  add_788_I3/SUM[5] (core_DW01_add_71)                    0.00       5.24 f
+  U3534/Y (INVX4)                                         0.13       5.37 r
+  U7411/Y (OAI222XL)                                      0.25       5.61 f
+  sobel_gx_r_reg[0][0][2][5]/D (DFFQXL)                   0.00       5.61 f
+  data arrival time                                                  5.61
+
+  clock i_clk (rise edge)                                 5.50       5.50
+  clock network delay (ideal)                             0.50       6.00
+  clock uncertainty                                      -0.10       5.90
+  sobel_gx_r_reg[0][0][2][5]/CK (DFFQXL)                  0.00       5.90 r
+  library setup time                                     -0.29       5.61
+  data required time                                                 5.61
+  --------------------------------------------------------------------------
+  data required time                                                 5.61
+  data arrival time                                                 -5.61
+  --------------------------------------------------------------------------
+  slack (MET)                                                        0.00
+
+
+1
